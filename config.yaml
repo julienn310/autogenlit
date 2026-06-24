@@ -1,0 +1,32 @@
+# A股智能体分析系统配置文件
+
+# MiniMax API配置
+minimax:
+  api_key: "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
+  base_url: "https://api.minimax.chat/v1"
+  model: "MiniMax-M2.7"
+
+# Tushare Pro配置（可选，需要积分）
+tushare:
+  enabled: false
+  token: ""  # 在此填入你的Tushare Pro token
+
+# 数据源配置
+data_source:
+  use_sina: true      # 使用新浪财经获取实时行情
+  use_akshare: true   # 使用akshare（需要代理支持）
+  use_tushare: false  # 使用Tushare Pro（需要token和积分）
+  cache_enabled: true
+  cache_ttl: 3600  # 缓存时间（秒）
+
+# 分析配置
+analysis:
+  default_period: "1y"  # 默认分析周期
+  enable_risk_analysis: true
+  enable_quantitative_analysis: true
+
+# 系统配置
+system:
+  log_level: "INFO"
+  max_tokens: 8000
+  temperature: 0.1
