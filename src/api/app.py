@@ -38,14 +38,14 @@ analysis_system = None
 websocket_manager = None
 pdf_tasks: Dict[str, Dict] = {}
 pdf_agent = None
-MINIMAX_API_KEY = "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
+MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global analysis_system
-    analysis_system = AStockAutoGenSystem("sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY")
+    analysis_system = AStockAutoGenSystem(MINIMAX_API_KEY)
     yield
 
 

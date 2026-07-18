@@ -1,0 +1,11 @@
+[server]
+headless = true
+port = 8501
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[browser]
+serverAddress = "0.0.0.0"
+gatherUsageStats = false

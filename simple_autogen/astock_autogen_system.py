@@ -277,23 +277,18 @@ class AgentOrchestrator:
 请各位依次发言，协作完成分析。"""
 
         # 创建GroupChat进行多智能体协作
+        llm_cfg = self.agents['user_proxy'].llm_config
         groupchat = autogen.GroupChat(
             agents=[user_proxy, data_analyst, financial_analyst, risk_analyst, investment_advisor],
             messages=[],
             max_round=12,
-            speaker_transitions=[
-                # 定义Agent之间的转换规则
-                {"from": "user_proxy", "to": "data_analyst"},
-                {"from": "data_analyst", "to": "financial_analyst"},
-                {"from": "financial_analyst", "to": "risk_analyst"},
-                {"from": "risk_analyst", "to": "investment_advisor"},
-                {"from": "investment_advisor", "to": "data_analyst"},  # 可以循环回到数据分析师确认
-            ]
+            speaker_transitions_type="disallowed",
+            select_speaker_auto_llm_config=llm_cfg
         )
 
         manager = autogen.GroupChatManager(
             groupchat=groupchat,
-            llm_config=self.agents['user_proxy'].llm_config
+            llm_config=llm_cfg
         )
 
         # 启动群聊
