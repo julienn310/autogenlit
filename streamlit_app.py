@@ -5,6 +5,7 @@ A股智能体分析系统 - Streamlit 版本
 
 import streamlit as st
 import sys
+import os
 import pandas as pd
 import threading
 from pathlib import Path
@@ -13,12 +14,16 @@ import time
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.data.astock_collector import AStockDataCollector
+from src.data.market_collector import fetch_major_indices
+from src.data.news_collector import fetch_news
+from src.data.announcement_collector import fetch_announcements, _classify_intent, _fetch_ann_content
 from src.analysis.financial_analyzer import FinancialAnalyzer
 from src.risk.risk_analyzer import RiskAnalyzer
 from src.risk.joint_risk_analyzer import JointRiskAnalyzer
 from src.optimization.portfolio_optimizer import PortfolioOptimizer
-from src.pdf.pdf_processor import PDFProcessor
 from src.agents.pdf_risk_agent import PDFRiskAgent
+from src.agents.announcement_agent import AnnouncementAgent
+from src.cache.shared_cache_stats import get_shared_cache_stats
 
 # 页面配置
 st.set_page_config(
@@ -120,10 +125,52 @@ def init_collectors():
         'portfolio_optimizer': PortfolioOptimizer(),
     }
 
-MINIMAX_API_KEY = "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
+def get_cached_analysis(symbol: str):
+    """获取分析结果（使用SQLite共享缓存）"""
+    shared_cache = get_shared_cache_stats()
+
+    # 先检查共享缓存中是否有数据
+    cached_data = shared_cache.get_cached_data(symbol)
+    if cached_data is not None:
+        shared_cache.record_hit(symbol)
+        # 命中时也更新 analysis_count（累计分析次数）
+        shared_cache.set_cached_data(symbol, cached_data)
+        # 返回缓存的dict数据（注意：返回的是字典而非dataclass对象）
+        return cached_data
+
+    shared_cache.record_miss()
+
+    # 没有缓存，需要重新计算
+    collectors = init_collectors()
+    data = collectors['data_collector'].collect_stock_data(symbol)
+    if not data or not data.get('info'):
+        return None
+    risk_metrics = collectors['risk_analyzer'].calculate_metrics(data)
+    joint_metrics = collectors['joint_risk_analyzer'].analyze(data)
+
+    result = {
+        'symbol': symbol,
+        'info': data.get('info', {}),
+        'risk_metrics': risk_metrics.to_dict() if hasattr(risk_metrics, 'to_dict') else risk_metrics,
+        'joint_metrics': joint_metrics.to_dict() if hasattr(joint_metrics, 'to_dict') else joint_metrics,
+    }
+
+    # 存入共享缓存
+    shared_cache.set_cached_data(symbol, result)
+    return result
+
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
 
 def get_api_key():
-    return MINIMAX_API_KEY
+    # 优先从 Streamlit Secrets（Streamlit Cloud），其次环境变量（本地）
+    try:
+        if hasattr(st, "secrets"):
+            secret_key = st.secrets.get("MINIMAX_API_KEY", "")
+            if secret_key:
+                return secret_key
+    except Exception:
+        pass
+    return os.getenv("MINIMAX_API_KEY", "")
 
 # 中文标签映射
 FINANCIAL_METRICS_LABELS = {
@@ -305,6 +352,161 @@ def mscore_warning_expander():
         </div>
         """, unsafe_allow_html=True)
 
+def generate_comprehensive_report(info, risk_metrics, joint_metrics, pdf_analysis=None, company_name=""):
+    """生成综合年报分析报告（Markdown格式）"""
+    from datetime import datetime
+
+    name = info.get('name', company_name or '未知')
+    symbol = info.get('symbol', '')
+    date = datetime.now().strftime('%Y-%m-%d')
+
+    # 支持 dict 或 dataclass（兼容旧代码）
+    def jm(key, default=''):
+        v = joint_metrics.get(key, default) if isinstance(joint_metrics, dict) else getattr(joint_metrics, key, default)
+        return v if v not in (None, '', '-') else default
+    def rm(key, default=''):
+        v = risk_metrics.get(key, default) if isinstance(risk_metrics, dict) else getattr(risk_metrics, key, default)
+        return v if v not in (None, '', '-') else default
+
+    altman_z = float(jm('altman_z', 0) or 0)
+    ohlson_o = float(jm('oholson_o', 0) or 0)
+    springate_s = float(jm('springate_s', 0) or 0)
+    zmijewski_x = float(jm('zmijewski_x', 0) or 0)
+    jones_da = float(jm('jones_da', 0) or 0)
+    dd_aq = float(jm('dd_aq', 0) or 0)
+    rem_score = float(jm('rem_score', 0) or 0)
+    piotroski_f = float(jm('piotroski_f', 0) or 0)
+    m_score = float(rm('m_score', 0) or 0)
+    dechow_f = float(jm('dechow_f', 0) or 0)
+    montier_c = float(jm('montier_c', 0) or 0)
+    sloan_accrual = float(jm('sloan_accrual', 0) or 0)
+    combined_risk_score = float(jm('combined_risk_score', 0) or 0)
+    combined_risk_level = jm('combined_risk_level', '低')
+    combined_risk_summary = jm('combined_risk_summary', '-')
+
+    report = f"""# {name} ({symbol}) 综合年报分析报告
+
+**分析日期**: {date}
+
+---
+
+## 一、风险模型分析结果
+
+### 【破产预警】
+
+| 指标 | 数值 | 评级 | 该股解读 |
+|------|------|------|----------|
+| Altman Z-Score | {altman_z:.2f} | {'安全' if altman_z > 2.99 else '灰色' if altman_z > 1.81 else '高风险'} | {jm('altman_z_interpretation', '-')} |
+| Ohlson O-Score | {ohlson_o:.2f} | {'正常' if ohlson_o < 0.5 else '存疑'} | {jm('oholson_o_interpretation', '-')} |
+| Springate S-Score | {springate_s:.2f} | {'正常' if springate_s < 0.862 else '预警'} | {jm('springate_s_interpretation', '-')} |
+| Zmijewski X-Score | {zmijewski_x:.2f} | {'正常' if zmijewski_x < 0.5 else '存疑'} | {jm('zmijewski_x_interpretation', '-')} |
+
+**原理详述**:
+- **Altman Z-Score**: Z = 1.2×(营运资本/总资产) + 1.4×(留存收益/总资产) + 3.3×(息税前利润/总资产) + 0.6×(股票市值/总负债) + 1.0×(销售收入/总资产)。数据来源：资产负债表、利润表。
+- **Ohlson O-Score**: 基于8因子logistic回归：SIZE(规模)、TLTA(负债率)、WCTA(流动资产)、CLCA(流动比率)、OENEG(是否亏损)、LNTATA(资产负债率的自然对数)、INTWO(亏损年数年数)、CHIN(盈利变化)。概率>0.5表示高破产风险。
+- **Springate S-Score**: S = 1.03×(营运资本/总资产) + 3.07×(息税前利润/总资产) + 1.67×(息税前利润/流动负债) + 1.4×(销售收入/总资产)。S<0.862预示破产风险。
+- **Zmijewski X-Score**: X = -4.3 - 4.5×ROA + 5.7×(负债率) - 0.004×(流动比率)，经sigmoid映射为概率值，>0.5表示存疑。
+
+---
+
+### 【盈余管理】
+
+| 指标 | 数值 | 该股解读 |
+|------|------|----------|
+| Jones DA | {jones_da:.4f} | {jm('jones_interpretation', '-')} |
+| DD AQ | {dd_aq:.4f} | {jm('dd_interpretation', '-')} |
+| REM Score | {rem_score:.4f} | {jm('rem_interpretation', '-')} |
+
+**原理详述**:
+- **Jones DA (可操纵应计利润)**: DA = TA - NDA，其中NDA = α₀ + α₁×(max(ΔREV-ΔREC,0)/A) + α₂×(PPE/A)。参数α₀=-0.001, α₁=0.033, α₂=0.040。数据：利润表(净利润)、现金流量表(经营活动现金流)、资产负债表(应收账款、固定资产)。DA>0表示可能存在向上盈余管理。
+- **DD AQ (Dechow-Dichev应计质量)**: AQ = |ΔWC - 0.7×CFO|/A，其中ΔWC为营运资本变化，CFO为经营现金流，A为总资产。应计质量损失越大，说明现金流与应计利润匹配度越差，财报可信度越低。
+- **REM Score (真实盈余管理)**: 衡量企业通过构造真实交易操纵利润的程度，包括：降价促销增加收入、减少可支配费用、过度生产降低销售成本。数据：利润表、现金流量表。
+
+---
+
+### 【财务质量】
+
+| 指标 | 数值 | 评级 | 该股解读 |
+|------|------|------|----------|
+| Piotroski F-Score | {piotroski_f:.0f}/9 | {'优良' if piotroski_f >= 7 else '极差' if piotroski_f <= 3 else '一般'} | {jm('piotroski_f_interpretation', '-')} |
+
+**原理详述**:
+Piotroski F-Score从三大维度9个指标评分：
+1. **盈利能力**(ROA>0, CFO>0, ΔROA>0)各1分
+2. **负债能力**(ΔLEVER↓流动负债率下降, ΔLIQU↑流动比率上升, 无新股票增发)各1分
+3. **运营效率**(ΔMARGIN↑毛利率上升, ΔTURN↑资产周转率上升, ΔSGA↓销售管理费用率下降)各1分
+数据：利润表、现金流量表、资产负债表。≥7分优良，≤3分极差。
+
+---
+
+### 【舞弊检测】
+
+| 指标 | 数值 | 该股解读 |
+|------|------|----------|
+| M-Score | {m_score:.2f} | {rm('m_score_interpretation', '-')} |
+| Dechow F-Score | {dechow_f:.4f} | {jm('dechow_f_interpretation', '-')} |
+| Montier C-Score | {montier_c:.2f} | {jm('montier_c_interpretation', '-')} |
+| Sloan 应计异象 | {sloan_accrual:.4f} | {jm('sloan_accrual_interpretation', '-')} |
+
+**原理详述**:
+- **M-Score (Beneish 8变量模型)**: M = -4.84 + 0.92×DSRI + 0.53×GMI + 0.40×AQI + 0.89×SGI + 0.12×DEPI - 0.17×SGAI - 0.33×LVGI + 4.70×TATA。DSRI(应收账款指数)= (本期应收账款/本期收入)/(上期应收账款/上期收入); GMI(毛利率指数)= 上期毛利率/本期毛利率; AQI(资产质量指数)= (本期非流动资产/总资产)/(上期非流动资产/总资产); SGI(销售增长指数)= 本期收入/上期收入; DEPI(折旧指数)= 上期折旧率/(上期折旧率+上期净固定资产); SGAI(费用指数)= (本期费用/本期收入)/(上期费用/上期收入); LVGI(杠杆指数)= (本期负债/本期总资产)/(上期负债/上期总资产); TATA= (净利润-经营现金流)/总资产。M > -1.21 表示存在财务操纵嫌疑。
+- **Dechow F-Score**: 包含11个变量预测被监管处罚/重大错报概率。关键变量：软资产比率、融资租赁、表外负债、应收账款增长、库存增长、现金流/净利润比率等。概率越高舞弊可能性越大。
+- **Montier C-Score**: 6分制红旗系统，检测：AR增长率>收入增长、库存增长、GM下降、折旧率下降、其他流动资产比率、现金流/净利润背离。各1分，>3分风险较高。
+- **Sloan应计异象**: Sloan(1996)发现高应计资产占比与未来负收益强相关。应计 = |净利润 - 经营现金流|/总资产。该指标越高，未来收益越差。
+
+---
+
+### 【综合风险评分】
+
+**评分**: {combined_risk_score:.0f}/100 | **等级**: {combined_risk_level}
+
+**综合解读**: {combined_risk_summary}
+
+---
+
+## 二、年报文本分析
+
+"""
+
+    if pdf_analysis:
+        report += f"""{pdf_analysis}
+
+"""
+    else:
+        report += """*（未获取到年报文本数据）*
+
+"""
+
+    report += f"""---
+
+## 三、投资建议
+
+基于以上风险模型分析和年报文本综合评估：
+
+**风险提示**: 综合风险评分 {combined_risk_score:.0f}/100，风险等级 **{combined_risk_level}**。
+
+{'建议关注：该公司财务指标正常，无明显风险信号。' if combined_risk_level == '低' else '建议谨慎：存在一定风险因素，请深入研究后决策。' if combined_risk_level == '中' else '建议回避：多项风险指标异常，建议规避。'}
+
+---
+
+*本报告由A股智能体分析系统自动生成，仅供参考，不构成投资建议。*
+"""
+
+    return report
+
+def display_cache_stats():
+    """显示缓存统计（从SQLite共享数据库读取）"""
+    shared_cache = get_shared_cache_stats()
+    stats = shared_cache.get_stats()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("累计分析", stats['cached_symbols'], "只")
+    with col2:
+        st.metric("缓存命中", stats['total_hits'])
+    with col3:
+        st.metric("缓存未命中", stats['total_misses'])
+
 # 主应用
 def main():
     with st.sidebar:
@@ -313,7 +515,7 @@ def main():
         st.success("API Key 已配置")
         st.divider()
         page = st.radio("导航", [
-            "仪表板", "财务分析", "投资组合", "风险分析", "PDF年报分析", "多智能体协作"
+            "仪表板", "财务分析", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
         ], index=0)
         st.divider()
         st.caption("系统状态: 正常运行")
@@ -332,6 +534,148 @@ def main():
         with col2: st.metric("分析维度", "20+", "财务/风险/市场")
         with col3: st.metric("智能体数量", "4", "协作分析")
         with col4: st.metric("PDF分析", "支持", "年报风险识别")
+
+        # ========== 全球市场行情 ==========
+        st.markdown('<div class="section-title">🌏 全球市场行情</div>', unsafe_allow_html=True)
+
+        with st.spinner("🌐 正在加载全球指数，请稍候..."):
+            try:
+                indices = fetch_major_indices()
+            except Exception:
+                indices = []
+
+        if indices:
+            # 按涨跌幅排序
+            indices_sorted = sorted(indices, key=lambda x: x['change_pct'], reverse=True)
+
+            # A股 / 全球分区
+            A_STOCK_CODES = {'sh000001', 'sz399001', 'sz399006', 'sh000300', 'sh000016', 'sh000905', 'sh000688'}
+            a_stocks = [i for i in indices_sorted if i['code'] in A_STOCK_CODES]
+            global_stocks = [i for i in indices_sorted if i['code'] not in A_STOCK_CODES]
+
+            def render_index_row(d):
+                pct = d['change_pct']
+                color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
+                sign = '+' if pct >= 0 else ''
+                return f"""
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #eee;">
+                    <span style="font-weight:600;min-width:100px;">{d['name']}</span>
+                    <span style="color:{color};font-weight:700;">{sign}{pct:.2f}%</span>
+                    <span style="color:#666;font-size:0.9em;">{d['price']:.2f}</span>
+                </div>"""
+
+            col_a, col_g = st.columns(2)
+            with col_a:
+                st.markdown("**📈 A股主要指数**", unsafe_allow_html=True)
+                for d in a_stocks[:7]:
+                    st.markdown(render_index_row(d), unsafe_allow_html=True)
+            with col_g:
+                st.markdown("**🌍 全球指数**", unsafe_allow_html=True)
+                for d in global_stocks[:7]:
+                    st.markdown(render_index_row(d), unsafe_allow_html=True)
+        else:
+            st.info("行情数据暂时不可用（网络环境限制）")
+
+        st.divider()
+
+        # ========== 金融舆情简报 ==========
+        st.markdown('<div class="section-title">📰 舆情与市场动态</div>', unsafe_allow_html=True)
+
+        with st.spinner("📡 正在抓取新闻与舆情，请稍候..."):
+            try:
+                news_data = fetch_news()
+            except Exception:
+                news_data = {'timeline': [], 'kol': [], 'weibo_sentiment': [], 'xueqiu_hot': [], 'flash': []}
+
+        timeline = news_data.get('timeline', [])
+        kol_list = news_data.get('kol', [])
+        weibo_sentiment = news_data.get('weibo_sentiment', [])
+        xueqiu_hot = news_data.get('xueqiu_hot', [])
+        flash = news_data.get('flash', [])
+
+        # ── 第一行：微博情绪 + 雪球热帖 ──
+        col_ws, col_xq = st.columns(2)
+
+        with col_ws:
+            st.markdown("**📊 微博情绪指数**（舆情冷暖）", unsafe_allow_html=True)
+            if weibo_sentiment:
+                for n in weibo_sentiment[:10]:
+                    title = n.get('title', '')
+                    # 提取指数值判断颜色
+                    import re
+                    m = re.search(r'([+-]?[\d.]+)', title.split(':')[-1] if ':' in title else '')
+                    if m:
+                        try:
+                            val = float(m.group(1))
+                            color = '#c00' if val > 0 else ('#1F4E79' if val < 0 else '#888')
+                        except:
+                            color = '#666'
+                    else:
+                        color = '#666'
+                    st.markdown(f"<span style='color:{color}'>● {title[:30]}</span>", unsafe_allow_html=True)
+            else:
+                st.caption("暂无数据")
+
+        with col_xq:
+            st.markdown("**🔥 雪球热议榜**（讨论热度）", unsafe_allow_html=True)
+            if xueqiu_hot:
+                for n in xueqiu_hot[:10]:
+                    title = n.get('title', '')
+                    url = n.get('url', '')
+                    if url:
+                        st.markdown(f"[{title[:35]}]({url})")
+                    else:
+                        st.markdown(f"{title[:35]}")
+            else:
+                st.caption("暂无数据")
+
+        st.divider()
+
+        # ── 第二行：快讯 + 最新资讯 ──
+        col_flash, col_news = st.columns([1, 2])
+
+        with col_flash:
+            st.markdown("**⚡ A股快讯**", unsafe_allow_html=True)
+            if flash:
+                for n in flash[:8]:
+                    t = n.get('time', '')
+                    time_str = t[5:] if t else ''
+                    short = n.get('title', '')[:28] + '...' if len(n.get('title', '')) > 28 else n.get('title', '')
+                    st.markdown(f"**{time_str}** {short}")
+            else:
+                st.caption("暂无数据")
+
+        with col_news:
+            st.markdown("**📰 最新资讯**（点击展开）", unsafe_allow_html=True)
+            if timeline:
+                for n in timeline[:12]:
+                    title = n.get('title', '')
+                    short = title[:40] + '...' if len(title) > 40 else title
+                    t = n.get('time', '')
+                    time_str = t[5:] if t else ''
+                    src = n.get('source', '')
+                    with st.expander(f"{time_str} {short}", expanded=False):
+                        st.markdown(f"**{title}**")
+                        if n.get('url'):
+                            st.markdown(f"[查看详情 →]({n['url']})")
+                        st.caption(f"来源: {src}")
+            else:
+                st.caption("暂无数据")
+
+        # ── KOL 动态 ──
+        if kol_list:
+            st.divider()
+            st.markdown("**💬 KOL 最新言论**", unsafe_allow_html=True)
+            for n in kol_list[:6]:
+                with st.expander(
+                    f"👤 {n.get('kol', '')} · {n.get('time', '')[5:] if n.get('time') else ''} — {n.get('title', '')[:40]}...",
+                    expanded=False
+                ):
+                    st.markdown(f"**{n.get('title', '')}**")
+                    if n.get('url'):
+                        st.markdown(f"[来源链接 →]({n['url']})")
+
+        st.divider()
 
         st.markdown('<div class="section-title">快速股票查询</div>', unsafe_allow_html=True)
 
@@ -548,138 +892,173 @@ def main():
                         joint_metrics.m_score = risk_metrics.m_score
                         joint_metrics.m_score_interpretation = risk_metrics.m_score_interpretation
 
+                        # 标题卡片
                         st.markdown(f"""
-                        <div class="result-card">
-                            <div style="font-size:1.4rem; font-weight:700; color:#1a1a2e;">{info.get('name', symbol)} ({symbol})</div>
-                            <div style="color:#6c757d; margin-top:5px;">联合风控分析 - 多模型综合风险评估</div>
+                        <div style="background:linear-gradient(135deg,#8fa8c0,#7b9cb8);padding:20px;border-radius:12px;color:white;margin-bottom:20px;">
+                            <div style="font-size:1.5rem;font-weight:700;">{info.get('name', symbol)} ({symbol})</div>
+                            <div style="opacity:0.9;margin-top:5px;">联合风控分析 - 多模型综合风险评估</div>
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # 破产预警指标
-                        st.markdown('<div class="section-title">破产预警指标</div>', unsafe_allow_html=True)
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Altman Z-Score</span>
-                                <span class="value">{joint_metrics.altman_z:.2f}</span>
+                        # 破产预警指标 - 莫兰迪蓝灰色
+                        st.markdown("""
+                        <div style="background:#f5f6f8;border-radius:12px;padding:20px;margin:15px 0;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+                                <span style="font-size:1.1rem;font-weight:600;color:#5a6b7a;">一、破产预警指标</span>
+                                <span class="tooltip-icon" title="基于财务比率预测企业破产风险的模型组合">❓</span>
                             </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.altman_z_interpretation, "Altman Z解读")
-                        with col2:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Ohlson O-Score</span>
-                                <span class="value">{joint_metrics.ohlson_o:.2f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.oholson_o_interpretation, "Ohlson O解读")
-
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Springate S-Score</span>
-                                <span class="value">{joint_metrics.springate_s:.2f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.springate_s_interpretation, "Springate S解读")
-                        with col2:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Zmijewski X-Score</span>
-                                <span class="value">{joint_metrics.zmijewski_x:.2f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.zmijewski_x_interpretation, "Zmijewski X解读")
-
-                        # 盈余管理指标
-                        st.markdown('<div class="section-title">盈余管理指标</div>', unsafe_allow_html=True)
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Jones DA (可操纵应计利润)</span>
-                                <span class="value">{joint_metrics.jones_da:.4f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.jones_interpretation, "Jones解读")
-                        with col2:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">DD AQ (应计质量损失)</span>
-                                <span class="value">{joint_metrics.dd_aq:.4f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.dd_interpretation, "Dechow-Dichev解读")
-                        with col3:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">REM Score (真实盈余管理)</span>
-                                <span class="value">{joint_metrics.rem_score:.4f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.rem_interpretation, "REM解读")
-
-                        # 财务质量筛查
-                        st.markdown('<div class="section-title">财务质量筛查 - Piotroski F-Score</div>', unsafe_allow_html=True)
-                        st.markdown(f"""
-                        <div class="metric-item">
-                            <span class="label">Piotroski F-Score (0-9)</span>
-                            <span class="value">{joint_metrics.piotroski_f:.0f}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        display_interpretation(joint_metrics.piotroski_f_interpretation, "Piotroski F解读")
-
-                        # Beneish M-Score
-                        st.markdown('<div class="section-title">Beneish M-Score (8变量原版)</div>', unsafe_allow_html=True)
-                        st.markdown(f"""
-                        <div class="metric-item" style="padding:15px; background:linear-gradient(135deg,#667eea22,#764ba222);border-radius:10px;">
-                            <span class="label" style="font-size:16px;font-weight:600;">M-Score 综合得分</span>
-                            <span class="value" style="font-size:28px;color:#667eea;font-weight:bold;">{joint_metrics.m_score:.2f}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        display_interpretation(joint_metrics.m_score_interpretation, "M-Score解读")
-
-                        # 财报舞弊概率
-                        st.markdown('<div class="section-title">财报舞弊/造假概率模型</div>', unsafe_allow_html=True)
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Dechow F-Score (舞弊概率)</span>
-                                <span class="value">{joint_metrics.dechow_f:.4f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.dechow_f_interpretation, "Dechow F解读")
-                        with col2:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Montier C-Score (6分制)</span>
-                                <span class="value">{joint_metrics.montier_c:.2f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.montier_c_interpretation, "Montier C解读")
-                        with col3:
-                            st.markdown(f"""
-                            <div class="metric-item">
-                                <span class="label">Sloan 应计异象</span>
-                                <span class="value">{joint_metrics.sloan_accrual:.4f}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            display_interpretation(joint_metrics.sloan_accrual_interpretation, "Sloan解读")
-
-                        # 综合评分
-                        if joint_metrics.combined_risk_score > 0:
-                            st.markdown('<div class="section-title">综合风险评分</div>', unsafe_allow_html=True)
-                            risk_level_class = "risk-high" if joint_metrics.combined_risk_level in ["高", "极高"] else "risk-medium" if joint_metrics.combined_risk_level == "中" else "risk-low"
-                            st.markdown(f"""
-                            <div class="{risk_level_class}">
-                                <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span style="font-size:1.2rem; font-weight:600;">综合风险等级: {joint_metrics.combined_risk_level}</span>
-                                    <span style="font-size:1.5rem; font-weight:bold;">{joint_metrics.combined_risk_score:.0f}/100</span>
+                            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:18px;">
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#7a8a96;">Altman Z-Score</span>
+                                        <span class="tooltip-icon" title=" Altman Z = 1.2×营运资本/总资产 + 1.4×留存收益/总资产 + 3.3×息税前利润/总资产 + 0.6×股票市值/总负债 + 1.0×销售收入/总资产">❓</span>
+                                    </div>
+                                    <div style="font-size:2.2rem;font-weight:700;color:#3d4f5f;margin:8px 0;">{:.2f}</div>
+                                    <div style="font-size:0.88rem;color:#5a7082;line-height:1.5;">{}</div>
                                 </div>
-                                <div class="interpretation" style="margin-top:10px;">{joint_metrics.combined_risk_summary}</div>
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#7a8a96;">Ohlson O-Score</span>
+                                        <span class="tooltip-icon" title=" Ohlson O = -1.32 - 0.407×规模 + 6.03×负债/资产 - 1.43×流动资产/负债 + 0.076×流动比率 - 1.72×是否亏损">❓</span>
+                                    </div>
+                                    <div style="font-size:2.2rem;font-weight:700;color:#3d4f5f;margin:8px 0;">{:.2f}</div>
+                                    <div style="font-size:0.88rem;color:#5a7082;line-height:1.5;">{}</div>
+                                </div>
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#7a8a96;">Springate S-Score</span>
+                                        <span class="tooltip-icon" title=" Springate S = 1.03×营运资本/总资产 + 3.07×息税前利润/总资产 + 1.67×息税前利润/流动负债 + 1.4×销售收入/总资产">❓</span>
+                                    </div>
+                                    <div style="font-size:2.2rem;font-weight:700;color:#3d4f5f;margin:8px 0;">{:.2f}</div>
+                                    <div style="font-size:0.88rem;color:#5a7082;line-height:1.5;">{}</div>
+                                </div>
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#7a8a96;">Zmijewski X-Score</span>
+                                        <span class="tooltip-icon" title=" Zmijewski X = -4.3 - 4.5×负债/资产 + 5.7×负债/资产² - 0.004×流动比率">❓</span>
+                                    </div>
+                                    <div style="font-size:2.2rem;font-weight:700;color:#3d4f5f;margin:8px 0;">{:.2f}</div>
+                                    <div style="font-size:0.88rem;color:#5a7082;line-height:1.5;">{}</div>
+                                </div>
+                            </div>
+                        </div>
+                        """.format(
+                            joint_metrics.altman_z, joint_metrics.altman_z_interpretation,
+                            joint_metrics.ohlson_o, joint_metrics.oholson_o_interpretation,
+                            joint_metrics.springate_s, joint_metrics.springate_s_interpretation,
+                            joint_metrics.zmijewski_x, joint_metrics.zmijewski_x_interpretation
+                        ), unsafe_allow_html=True)
+
+                        # 盈余管理指标 - 莫兰迪灰绿色
+                        st.markdown("""
+                        <div style="background:#f5f7f5;border-radius:12px;padding:20px;margin:15px 0;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+                                <span style="font-size:1.1rem;font-weight:600;color:#5a6b5a;">二、盈余管理指标</span>
+                                <span class="tooltip-icon" title="检测企业是否通过会计手段操纵利润的模型">❓</span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;">
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#7a8a7a;">Jones DA</span>
+                                        <span class="tooltip-icon" title=" Jones模型：可操纵应计利润 = 净利润 - 经营现金流，数值越大盈余管理可能性越高">❓</span>
+                                    </div>
+                                    <div style="font-size:2rem;font-weight:700;color:#3d4f3d;margin:8px 0;">{:.4f}</div>
+                                    <div style="font-size:0.85rem;color:#5a705a;line-height:1.4;">{}</div>
+                                </div>
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#7a8a7a;">DD AQ</span>
+                                        <span class="tooltip-icon" title=" Dechow-Dichev模型：应计质量 = 经营现金流波动/总资产，应计质量损失越大，财报可信赖度越低">❓</span>
+                                    </div>
+                                    <div style="font-size:2rem;font-weight:700;color:#3d4f3d;margin:8px 0;">{:.4f}</div>
+                                    <div style="font-size:0.85rem;color:#5a705a;line-height:1.4;">{}</div>
+                                </div>
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#7a8a7a;">REM Score</span>
+                                        <span class="tooltip-icon" title=" 真实盈余管理：企业通过构造真实交易（降价促销、减少研发）来操纵利润">❓</span>
+                                    </div>
+                                    <div style="font-size:2rem;font-weight:700;color:#3d4f3d;margin:8px 0;">{:.4f}</div>
+                                    <div style="font-size:0.85rem;color:#5a705a;line-height:1.4;">{}</div>
+                                </div>
+                            </div>
+                        </div>
+                        """.format(joint_metrics.jones_da, joint_metrics.jones_interpretation, joint_metrics.dd_aq, joint_metrics.dd_interpretation, joint_metrics.rem_score, joint_metrics.rem_interpretation), unsafe_allow_html=True)
+
+                        # 财务质量筛查 - 莫兰迪灰蓝色
+                        st.markdown(f"""
+                        <div style="background:#f4f6f8;border-radius:12px;padding:20px;margin:15px 0;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+                                <span style="font-size:1.1rem;font-weight:600;color:#5a6b7a;">三、财务质量筛查</span>
+                                <span class="tooltip-icon" title=" Piotroski F-Score：9分制，从盈利能力、负债能力、运营效率三个维度评估财务健康度">❓</span>
+                            </div>
+                            <div style="background:#fff;padding:25px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);text-align:center;">
+                                <div style="font-size:0.95rem;color:#7a8a96;">Piotroski F-Score</div>
+                                <div style="font-size:3.5rem;font-weight:700;color:#4a5d6d;margin:10px 0;">{joint_metrics.piotroski_f:.0f}<span style="font-size:1.5rem;color:#8a9aaa;">/9</span></div>
+                                <div style="font-size:0.95rem;color:#5a7082;line-height:1.5;">{joint_metrics.piotroski_f_interpretation}</div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # 财报舞弊概率 - 莫兰迪灰紫色
+                        st.markdown("""
+                        <div style="background:#f6f5f7;border-radius:12px;padding:20px;margin:15px 0;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+                                <span style="font-size:1.1rem;font-weight:600;color:#6b5a7a;">四、财报舞弊/造假概率</span>
+                                <span class="tooltip-icon" title="综合多个舞弊检测模型，预测企业财报造假可能性">❓</span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;">
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#8a7a8a;">Dechow F-Score</span>
+                                        <span class="tooltip-icon" title=" Dechow舞弊模型：包含11个变量（软资产、融资租赁等表外负债），直接预测被监管处罚概率">❓</span>
+                                    </div>
+                                    <div style="font-size:2rem;font-weight:700;color:#4d3d4d;margin:8px 0;">{:.4f}</div>
+                                    <div style="font-size:0.85rem;color:#5a4a5a;line-height:1.4;">{}</div>
+                                </div>
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#8a7a8a;">Montier C-Score</span>
+                                        <span class="tooltip-icon" title=" Montier C-Score：6分制，综合应计项目、应收账款、库存等指标评估舞弊风险">❓</span>
+                                    </div>
+                                    <div style="font-size:2rem;font-weight:700;color:#4d3d4d;margin:8px 0;">{:.2f}</div>
+                                    <div style="font-size:0.85rem;color:#5a4a5a;line-height:1.4;">{}</div>
+                                </div>
+                                <div style="background:#fff;padding:18px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:0.95rem;color:#8a7a8a;">Sloan 应计异象</span>
+                                        <span class="tooltip-icon" title=" Sloan应计异象：高应计资产占比与未来负收益强相关，应计占比越高越危险">❓</span>
+                                    </div>
+                                    <div style="font-size:2rem;font-weight:700;color:#4d3d4d;margin:8px 0;">{:.4f}</div>
+                                    <div style="font-size:0.85rem;color:#5a4a5a;line-height:1.4;">{}</div>
+                                </div>
+                            </div>
+                        </div>
+                        """.format(joint_metrics.dechow_f, joint_metrics.dechow_f_interpretation, joint_metrics.montier_c, joint_metrics.montier_c_interpretation, joint_metrics.sloan_accrual, joint_metrics.sloan_accrual_interpretation), unsafe_allow_html=True)
+
+                        # 综合评分 - 莫兰迪配色
+                        if joint_metrics.combined_risk_score > 0:
+                            risk_colors = {"极高": "#8b5a5a", "高": "#9b7a6a", "中": "#a89a7a", "低": "#6a8a7a"}
+                            bg_colors = {"极高": "#f8f5f5", "高": "#f7f4f2", "中": "#f6f5f2", "低": "#f2f5f4"}
+                            border_colors = {"极高": "#8b5a5a", "高": "#9b7a6a", "中": "#a89a7a", "低": "#6a8a7a"}
+                            color = risk_colors.get(joint_metrics.combined_risk_level, "#6a7a8a")
+                            bg = bg_colors.get(joint_metrics.combined_risk_level, "#f5f6f8")
+                            border = border_colors.get(joint_metrics.combined_risk_level, "#7a8a9a")
+                            st.markdown(f"""
+                            <div style="background:{bg};border-radius:12px;padding:28px;margin:20px 0;box-shadow:0 2px 10px rgba(0,0,0,0.08);border-left:5px solid {border};">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <div>
+                                        <div style="font-size:1rem;color:#6a7a8a;">综合风险等级</div>
+                                        <div style="font-size:2.2rem;font-weight:700;color:{color};">{joint_metrics.combined_risk_level}</div>
+                                    </div>
+                                    <div style="text-align:right;">
+                                        <div style="font-size:1rem;color:#6a7a8a;">综合风险评分</div>
+                                        <div style="font-size:3.5rem;font-weight:700;color:{color};">{joint_metrics.combined_risk_score:.0f}<span style="font-size:1.5rem;color:#8a9aaa;">/100</span></div>
+                                    </div>
+                                </div>
+                                <div style="margin-top:18px;padding:18px;background:white;border-radius:10px;font-size:1rem;color:#4a5a6a;line-height:1.7;">
+                                    {joint_metrics.combined_risk_summary}
+                                </div>
                             </div>
                             """, unsafe_allow_html=True)
 
@@ -714,7 +1093,7 @@ def main():
                         with col3: st.metric("下行标准差", f"{risk_metrics.downside_dev:.2%}")
 
                         # Beneish M-Score
-                        st.markdown('<div class="section-title">Beneish M-Score (8变量原版)</div>', unsafe_allow_html=True)
+                        st.markdown('<div class="section-title">Beneish M-Score 财务粉饰检测</div>', unsafe_allow_html=True)
                         st.markdown(f"""
                         <div class="metric-item" style="padding:15px; background:linear-gradient(135deg,#667eea22,#764ba222);border-radius:10px;">
                             <span class="label" style="font-size:16px;font-weight:600;">M-Score 综合得分</span>
@@ -762,46 +1141,316 @@ def main():
 
     # ==================== PDF年报分析 ====================
     elif page == "PDF年报分析":
-        st.markdown("### PDF年报风险分析")
+        st.markdown("### 综合年报分析")
 
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            uploaded_file = st.file_uploader("上传PDF年报", type="pdf")
-        with col2:
-            company_name = st.text_input("公司名称（可选）", placeholder="贵州茅台")
+        tab1, tab2 = st.tabs(["🔍 综合年报分析", "📊 榜单统计"])
 
-        if uploaded_file and st.button("开始分析", type="primary"):
-            import tempfile
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                tmp_path = tmp_file.name
+        # -------------------- TAB1: 综合年报分析 --------------------
+        with tab1:
+            st.markdown("""
+            <div style="background:#f5f6f8;border-radius:12px;padding:15px;margin-bottom:20px;">
+                <div style="font-size:1rem;color:#333;margin-bottom:8px;">🔍 综合年报分析</div>
+                <div style="font-size:0.85rem;color:#666;">输入股票代码，自动获取年报、分析风险模型、生成综合报告</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            def load_pdf():
-                processor = PDFProcessor()
-                pdf_agent = PDFRiskAgent(get_api_key())
-                text = processor.extract_text(tmp_path, max_pages=100)
-                financial_text = processor.extract_financial_notes(text)
-                if not financial_text:
-                    financial_text = processor.extract_debt_related_content(text)
-                if not financial_text:
-                    financial_text = text[:20000]
-                return pdf_agent.analyze(financial_text, company_name)
+            # 显示缓存统计
+            display_cache_stats()
 
-            try:
-                result = show_loading_animation(data_loader=load_pdf)
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                symbol_input = st.text_input("股票代码", placeholder="000001", key="comprehensive_symbol")
+            with col2:
+                year_input = st.number_input("年报年份", min_value=2010, max_value=2025, value=2024, key="comprehensive_year")
 
-                st.markdown("""
-                <div class="result-card">
-                    <div style="font-size:1.3rem; font-weight:600; color:#1a1a2e;">年报风险分析结果</div>
-                </div>
-                """, unsafe_allow_html=True)
-                st.markdown(f"""
-                <div class="analysis-text" style="white-space:pre-wrap;">{result}</div>
-                """, unsafe_allow_html=True)
-            finally:
-                import os
-                try: os.unlink(tmp_path)
-                except: pass
+            uploaded_pdf = st.file_uploader("上传年报PDF（可选，作为补充）", type="pdf", key="comprehensive_pdf")
+
+            if st.button("生成综合报告", type="primary", key="comprehensive_btn"):
+                if symbol_input:
+                    def load_comprehensive():
+                        # 获取缓存分析
+                        result = get_cached_analysis(symbol_input)
+                        if not result:
+                            return None, None, None, "无法获取股票数据"
+
+                        info = result['info']
+                        risk_metrics = result['risk_metrics']
+                        joint_metrics = result['joint_metrics']
+
+                        pdf_analysis = None
+                        annual_data = None
+
+                        from src.pdf.annual_report_downloader import AnnualReportDownloader
+                        downloader = AnnualReportDownloader()
+                        annual_data, company_name = downloader.download_latest_annual_report(symbol_input, year_input)
+
+                        if annual_data:
+                            try:
+                                pdf_agent = PDFRiskAgent(get_api_key())
+                                pdf_analysis = pdf_agent.analyze_financial_data(
+                                    annual_data,
+                                    company_name or info.get('name', '')
+                                )
+                            except Exception as e:
+                                pdf_analysis = f"（年报数据分析异常：{e}）"
+                        elif uploaded_pdf:
+                            # PDF上传作为补充数据源
+                            import tempfile
+                            from src.pdf.pdf_processor import PDFProcessor
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                                tmp_file.write(uploaded_pdf.getvalue())
+                                pdf_path = tmp_file.name
+                            try:
+                                processor = PDFProcessor()
+                                pdf_agent = PDFRiskAgent(get_api_key())
+                                text = processor.extract_text(pdf_path, max_pages=100)
+                                financial_text = processor.extract_financial_notes(text)
+                                if not financial_text:
+                                    financial_text = processor.extract_debt_related_content(text)
+                                if not financial_text:
+                                    financial_text = text[:20000]
+                                pdf_analysis = pdf_agent.analyze(financial_text, company_name or info.get('name', ''))
+                            finally:
+                                import os
+                                try: os.unlink(pdf_path)
+                                except: pass
+                        else:
+                            pdf_analysis = "（年报数据获取失败）"
+
+                        return info, risk_metrics, joint_metrics, pdf_analysis
+
+                    try:
+                        info, risk_metrics, joint_metrics, pdf_analysis = show_loading_animation(data_loader=load_comprehensive)
+                        if info:
+                            report = generate_comprehensive_report(info, risk_metrics, joint_metrics, pdf_analysis)
+                            st.session_state['last_report'] = report
+
+                            st.markdown("""
+                            <div class="result-card">
+                                <div style="font-size:1.3rem; font-weight:600; color:#1a1a2e;">综合年报分析报告</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            st.markdown(report)
+
+                            if st.button("📥 导出报告", key="export_report"):
+                                try:
+                                    from reportlab.lib.pagesizes import A4
+                                    from reportlab.lib.styles import getSampleStyleSheet
+                                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+                                    from reportlab.lib.units import cm
+                                    import io
+
+                                    buffer = io.BytesIO()
+                                    doc = SimpleDocTemplate(buffer, pagesize=A4)
+                                    styles = getSampleStyleSheet()
+                                    story = []
+
+                                    for line in report.split('\n'):
+                                        if line.startswith('# '):
+                                            story.append(Paragraph(f"<b>{line[2:]}</b>", styles['Title']))
+                                            story.append(Spacer(1, 0.3*cm))
+                                        elif line.startswith('## '):
+                                            story.append(Paragraph(f"<b>{line[3:]}</b>", styles['Heading2']))
+                                            story.append(Spacer(1, 0.2*cm))
+                                        elif line.startswith('### '):
+                                            story.append(Paragraph(f"<b>{line[4:]}</b>", styles['Heading3']))
+                                            story.append(Spacer(1, 0.15*cm))
+                                        elif line.startswith('| '):
+                                            story.append(Paragraph(line, styles['Normal']))
+                                        elif line.startswith('**') and line.endswith('**'):
+                                            story.append(Paragraph(line.replace('**', ''), styles['Normal']))
+                                        elif line.strip():
+                                            story.append(Paragraph(line, styles['Normal']))
+                                            story.append(Spacer(1, 0.1*cm))
+
+                                    doc.build(story)
+                                    buffer.seek(0)
+                                    st.download_button(
+                                        label="下载PDF",
+                                        data=buffer.getvalue(),
+                                        file_name=f"{symbol_input}_年报分析报告.pdf",
+                                        mime="application/pdf"
+                                    )
+                                except Exception as e:
+                                    st.error(f"导出失败: {str(e)}")
+                        else:
+                            st.error(pdf_analysis or "分析失败")
+                    except Exception as e:
+                        st.error(f"分析出错: {str(e)}")
+
+        # -------------------- TAB2: 榜单统计 --------------------
+        with tab2:
+            st.markdown("""
+            <div style="background:#f5f6f8;border-radius:12px;padding:15px;margin-bottom:20px;">
+                <div style="font-size:1rem;color:#333;margin-bottom:8px;">📊 榜单统计</div>
+                <div style="font-size:0.85rem;color:#666;">展示已分析股票排名，分析次数越多排名越高</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            display_cache_stats()
+
+            ranking = get_shared_cache_stats().get_ranking(limit=30)
+
+            if ranking:
+                # 转换为DataFrame便于可视化
+                import pandas as pd
+                df_ranking = pd.DataFrame(ranking)
+                df_ranking['排名'] = range(1, len(df_ranking) + 1)
+                df_ranking['股票名称'] = df_ranking['name'].apply(lambda x: x if x else df_ranking['symbol'])
+                df_ranking['分析次数'] = df_ranking['count']
+
+                # ---- 指标卡片 ----
+                total_stocks = len(df_ranking)
+                total_analysis = int(df_ranking['分析次数'].sum())
+                top_stock = df_ranking.iloc[0]['股票名称'] if not df_ranking.empty else '-'
+                top_count = int(df_ranking.iloc[0]['分析次数']) if not df_ranking.empty else 0
+
+                col1, col2, col3, col4 = st.columns(4)
+                with col1: st.metric("累计分析股票数", total_stocks)
+                with col2: st.metric("累计分析总次数", total_analysis)
+                with col3: st.metric("榜首", top_stock)
+                with col4: st.metric("榜首次数", top_count)
+
+                st.divider()
+
+                # ---- 柱状图：分析次数排行 ----
+                st.markdown("#### 分析次数排行榜（前15名）")
+                chart_data = df_ranking.head(15).copy()
+                chart_data['label'] = chart_data['股票名称'] + ' (' + chart_data['symbol'] + ')'
+
+                # 使用streamlit原生bar_chart
+                bar_df = chart_data.set_index('label')['分析次数']
+                st.bar_chart(bar_df, horizontal=True)
+
+                st.divider()
+
+                # ---- 详细榜单表格 ----
+                st.markdown("#### 完整榜单")
+                display_df = df_ranking[['排名', 'symbol', '股票名称', '分析次数']].copy()
+                display_df.columns = ['排名', '代码', '股票名称', '分析次数']
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("暂无分析记录，请先在「综合年报分析」中分析股票")
+
+    # ==================== 公告解读 ====================
+    elif page == "公告解读":
+        st.markdown("### 📋 公司公告解读")
+
+        st.markdown("""
+        <div style="background:#f5f6f8;border-radius:12px;padding:15px;margin-bottom:20px;">
+        输入股票代码，自动抓取近90天公告，AI即时解读公司公告意图、管理层动向。<br>
+        <b>数据来源：</b>东方财富 &nbsp;|&nbsp; <b>覆盖：</b>高管变动/业绩/分红/回购/增持/关联交易/监管问询等
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 初始化 session_state
+        if 'ann_anns' not in st.session_state:
+            st.session_state['ann_anns'] = None
+        if 'ann_symbol' not in st.session_state:
+            st.session_state['ann_symbol'] = ""
+        if 'ann_analysis' not in st.session_state:
+            st.session_state['ann_analysis'] = None  # 综合解读结果
+        if 'ann_selected' not in st.session_state:
+            st.session_state['ann_selected'] = None  # 当前选中的公告
+        if 'ann_selected_result' not in st.session_state:
+            st.session_state['ann_selected_result'] = None
+
+        col_sym, col_days = st.columns([2, 1])
+        with col_sym:
+            ann_symbol = st.text_input("股票代码", value=st.session_state.get('ann_symbol', ''), placeholder="如：000001（平安银行）", key="ann_sym_input")
+        with col_days:
+            ann_days = st.slider("公告回溯天数", 30, 180, 90, key="ann_days_slider")
+
+        col_fetch, col_clear = st.columns([1, 1])
+        with col_fetch:
+            fetchClicked = st.button("🔍 抓取公告", type="primary", use_container_width=True)
+        with col_clear:
+            if st.button("🗑 清空", use_container_width=True):
+                st.session_state['ann_anns'] = None
+                st.session_state['ann_symbol'] = ""
+                st.session_state['ann_analysis'] = None
+                st.session_state['ann_selected'] = None
+                st.session_state['ann_selected_result'] = None
+                st.rerun()
+
+        anns = st.session_state.get('ann_anns')
+
+        if fetchClicked and ann_symbol:
+            ann_symbol = ann_symbol.strip()
+            st.session_state['ann_symbol'] = ann_symbol
+            with st.spinner("正在抓取公告..."):
+                anns = fetch_announcements(ann_symbol, days=ann_days)
+                st.session_state['ann_anns'] = anns
+                st.session_state['ann_analysis'] = None
+                st.session_state['ann_selected'] = None
+                st.session_state['ann_selected_result'] = None
+
+        if anns:
+            from collections import Counter
+            cats = Counter(a['category'] for a in anns)
+            cat_cols = st.columns(min(len(cats), 6))
+            for idx, (cat, cnt) in enumerate(cats.most_common()):
+                with cat_cols[idx % 6]:
+                    st.metric(cat, f"{cnt}条")
+
+            st.divider()
+
+            # ===== 综合AI解读 =====
+            if st.button("🧠 AI综合解读全部公告", type="primary"):
+                with st.spinner("正在深度分析..."):
+                    agent = AnnouncementAgent(get_api_key())
+                    st.session_state['ann_analysis'] = agent.analyze(
+                        st.session_state['ann_symbol'], days=ann_days
+                    )
+
+            if st.session_state.get('ann_analysis'):
+                st.markdown("#### 🧠 AI综合解读")
+                st.markdown(st.session_state['ann_analysis'])
+                st.divider()
+
+            # ===== 公告列表 =====
+            st.markdown("#### 📑 公告列表")
+            selected = st.session_state.get('ann_selected')
+
+            for i, ann in enumerate(anns[:50]):
+                ann_key = f"ann_{i}"
+                exp_state = selected == ann_key
+
+                with st.expander(f"**{ann['date']}** [{ann['category']}] {ann['title'][:65]}", expanded=exp_state):
+                    st.caption(f"来源：{ann['source']} | 分类：{ann['category']}")
+                    st.markdown(f"**{ann['title']}**")
+
+                    # 预计算的意图标签
+                    intent = _classify_intent(ann['title'], ann['category'])
+                    if intent:
+                        st.info(f"💡 AI初步判断：{intent}")
+
+                    if ann.get('url'):
+                        st.markdown(f"[🔗 查看原文]({ann['url']})")
+
+                    # 公告内容摘要
+                    content = _fetch_ann_content(ann)
+                    if content:
+                        st.text(f"📄 {content}"[:300])
+
+                    # 深度解读按钮
+                    col_ai, col_spacer = st.columns([1, 3])
+                    with col_ai:
+                        if st.button("🤖 深度解读", key=f"ai_{i}"):
+                            with st.spinner("正在解读..."):
+                                agent = AnnouncementAgent(get_api_key())
+                                result = agent.analyze_single(ann, company_name="")
+                            st.session_state['ann_selected_result'] = result
+                            st.session_state['ann_selected'] = ann_key
+
+                    # 显示深度解读结果
+                    if st.session_state.get('ann_selected') == ann_key and st.session_state.get('ann_selected_result'):
+                        st.markdown("---")
+                        st.markdown(st.session_state['ann_selected_result'])
+        elif st.session_state.get('ann_symbol') and not fetchClicked:
+            st.warning("请点击「抓取公告」按钮开始分析")
+        else:
+            st.info("👆 输入股票代码，点击「抓取公告」开始")
 
     # ==================== 多智能体协作 ====================
     elif page == "多智能体协作":

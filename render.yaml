@@ -8,9 +8,8 @@ services:
     region: singapore
     plan: free
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
     envVars:
       - key: MINIMAX_API_KEY
-        sync: false  # 需要手动设置
+        sync: false
       - key: PYTHON_VERSION
         value: "3.10"
