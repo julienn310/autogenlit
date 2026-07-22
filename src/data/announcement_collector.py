@@ -34,7 +34,7 @@ def _classify(title: str) -> str:
 
 
 def fetch_announcements(symbol: str, days: int = 90) -> List[Dict]:
-    """获取个股近N天公告列表（使用东财 np-anotice API）"""
+    """获取个股近N天公告列表（新浪 + 东财双来源，去重后按日期排序）"""
     import datetime
     from datetime import timedelta
     import requests
@@ -42,117 +42,121 @@ def fetch_announcements(symbol: str, days: int = 90) -> List[Dict]:
     end_date = datetime.datetime.now()
     start_date = end_date - timedelta(days=days)
 
-    results = []
+    all_results = {}  # key: (title[:40], date) -> dict, 用于去重
 
-    # 东财公告（np-anotice API，直接调通）
+    # ── 新浪公告（可抓正文）─────────────────────────────
     try:
         session = requests.Session()
         session.trust_env = False
+        sina_base = 'https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllBulletin/stockid'
+        page = 1
+        while page <= 5:
+            url = f'{sina_base}/{symbol}/page/{page}.phtml'
+            r = session.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            text = r.content.decode('gbk', errors='replace')
+
+            datelist_match = re.search(r'class="datelist">(.*?)</ul>', text, re.DOTALL)
+            if not datelist_match:
+                break
+            datelist = datelist_match.group(1)
+            entries = re.findall(
+                r'(\d{4}-\d{2}-\d{2})&nbsp;<a[^>]+/corp/view/vCB_AllBulletinDetail\.php\?stockid=\d+&id=(\d+)[^>]*>([^<]+)</a>',
+                datelist
+            )
+            if not entries:
+                break
+
+            page_has_new = False
+            for date_str, sina_id, title in entries:
+                title = title.strip()
+                if not title:
+                    continue
+                notice_date = date_str
+                d = datetime.datetime.strptime(notice_date, '%Y-%m-%d')
+                if d < start_date:
+                    continue
+                page_has_new = True
+                key = (title[:40].replace('：', ':'), notice_date)
+                if key not in all_results:
+                    all_results[key] = {
+                        'category': _classify(title),
+                        'title': title,
+                        'date': notice_date,
+                        'url': f'https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?stockid={symbol}&id={sina_id}',
+                        'source': '新浪',
+                        'art_id': sina_id,
+                    }
+            if not page_has_new:
+                break
+            page += 1
+    except Exception as e:
+        logger.warning(f"新浪公告失败: {e}")
+
+    # ── 东财公告（补充，没有内容但补全公告覆盖面）─────────
+    try:
+        session2 = requests.Session()
+        session2.trust_env = False
         url = 'https://np-anotice-stock.eastmoney.com/api/security/ann'
-        page_size = 50
         page_index = 1
         all_items = []
-
         while True:
             params = {
-                'sr': -1,
-                'page_size': page_size,
-                'page_index': page_index,
-                'ann_type': 'A',
-                'client_source': 'web',
-                'f_node': 0,
-                's_node': 0,
-                'stock_list': symbol
+                'sr': -1, 'page_size': 50, 'page_index': page_index,
+                'ann_type': 'A', 'client_source': 'web',
+                'f_node': 0, 's_node': 0, 'stock_list': symbol
             }
-            r = session.get(url, params=params, timeout=10)
+            r = session2.get(url, params=params, timeout=10)
             j = r.json()
             data = j.get('data', {})
-            if isinstance(data, dict):
-                items = data.get('list', [])
-                total = data.get('total_hits', 0)
-            else:
-                items = []
-                total = 0
+            items = data.get('list', []) if isinstance(data, dict) else []
             all_items.extend(items)
-            if not items or len(all_items) >= total or page_index >= 3:
+            total = data.get('total_hits', 0) if isinstance(data, dict) else 0
+            if not items or len(all_items) >= total or page_index >= 5:
                 break
             page_index += 1
 
         for item in all_items:
-            title = item.get('title', '') or item.get('title_ch', '')
-            notice_date = item.get('notice_date', '') or item.get('sort_date', '')
+            title = (item.get('title', '') or item.get('title_ch', '')).strip()
+            notice_date = str(item.get('notice_date', ''))[:10]
             art_code = item.get('art_code', '')
-            if not title:
+            if not title or not notice_date:
                 continue
-            results.append({
-                'category': _classify(title),
-                'title': title,
-                'date': notice_date[:10] if len(str(notice_date)) > 10 else str(notice_date),
-                'url': f'https://data.eastmoney.com/notices/detail/{symbol}/{art_code}.html',
-                'source': '东财',
-                'art_id': art_code,
-            })
+            d = datetime.datetime.strptime(notice_date, '%Y-%m-%d')
+            if d < start_date:
+                continue
+            key = (title[:40].replace('：', ':'), notice_date)
+            if key not in all_results:
+                all_results[key] = {
+                    'category': _classify(title),
+                    'title': title,
+                    'date': notice_date,
+                    'url': f'https://data.eastmoney.com/notices/detail/{symbol}/{art_code}.html',
+                    'source': '东财',
+                    'art_id': art_code,
+                }
     except Exception as e:
         logger.warning(f"东财公告失败: {e}")
 
-    # 去重 + 排序
-    seen = set()
-    unique = []
-    for r in results:
-        key = (r['title'][:30], r['date'][:10])
-        if key not in seen:
-            seen.add(key)
-            unique.append(r)
-    unique.sort(key=lambda x: x.get('date', ''), reverse=True)
-    return unique
+    # 按日期排序
+    results = sorted(all_results.values(), key=lambda x: x.get('date', ''), reverse=True)
+    return results
 
 
 def _extract_em_content(art_id: str) -> Optional[str]:
-    """尝试从东财HTML页面提取公告正文（尽力而为）"""
-    try:
-        import requests
-        from html import unescape
-        session = requests.Session()
-        session.trust_env = False
-        url = f'https://noticecdn.eastmoney.com/content/web?artCode={art_id}'
-        r = session.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0',
-            'Referer': 'https://data.eastmoney.com/'
-        })
-        text = r.content.decode('utf-8', errors='replace')
-        text = unescape(text)
-        # 去掉导航/sidebar/footer
-        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
-        # 找主内容区（通常包含 class="detail" 或 id="detail"）
-        # 提取 article 或 main 区域
-        main = re.search(r'<article[^>]*>(.*?)</article>', text, re.DOTALL)
-        if main:
-            content = main.group(1)
-        else:
-            # 找正文区域
-            content = text
-        # 去标签
-        content = re.sub(r'<[^>]+>', ' ', content)
-        content = re.sub(r'\s+', ' ', content).strip()
-        # 去掉导航文字残留
-        nav_words = ['登录', '注册', '东方财富', '财经', '手机版', '客户端', '收藏', '分享', '评论', '点赞', '相关', '推荐', '更多']
-        for w in nav_words:
-            content = content.replace(w, '')
-        # 只保留长段落（正文）
-        sentences = [s.strip() for s in re.split(r'[。！？\n]', content) if len(s.strip()) > 30]
-        if not sentences:
-            return None
-        return '。'.join(sentences[:20])  # 最多20段
-    except Exception:
-        return None
+    """东财公告正文已被JS渲染锁死，无法服务端获取，直接返回None"""
+    return None
 
 
-def fetch_content_for_ann(ann: Dict) -> str:
-    """获取单条公告的正文内容（尽力而为）"""
+def fetch_content_for_ann(ann: Dict) -> Optional[str]:
+    """获取单条公告的正文内容"""
+    # 新浪详情页（可抓正文）
+    url = ann.get('url', '')
+    if 'sina.com.cn' in url:
+        return _fetch_ann_content(ann)
+    # 东财（正文被JS渲染锁死，尝试备选）
     if ann.get('source') == '东财' and ann.get('art_id'):
         content = _extract_em_content(ann['art_id'])
-        if content and len(content) > 100:
+        if content and len(content) > 50:
             return content
     return None
 
@@ -178,7 +182,7 @@ def build_announcement_context(anns: List[Dict], include_content: bool = True) -
             if include_content:
                 content = fetch_content_for_ann(a)
                 if content:
-                    content_note = f"\n  内容摘要: {content[:200]}..."
+                    content_note = f"\n  内容摘要: {content[:2000]}..."
             lines.append(f"  {a['date']} [{a['category']}] {a['title']}{content_note}")
         lines.append("")
 
@@ -282,53 +286,37 @@ def _classify_intent(title: str, category: str) -> str:
 
 def _fetch_ann_content(ann: Dict) -> Optional[str]:
     """
-    尝试获取公告正文摘要。
-    由于东财公告正文通过JS动态渲染，服务端无法直接获取，
-    因此改用规则从标题中提取关键信息作为"摘要"。
+    从新浪财经详情页抓取公告正文。
+    公告列表的 url 字段直接是新浪详情页URL。
     """
-    title = ann.get('title', '')
-    category = ann.get('category', '')
-    date = ann.get('date', '')
-
-    if not title:
+    url = ann.get('url', '')
+    if not url or 'sina.com.cn' not in url:
         return None
 
-    # 从标题中提取公司名和核心内容
-    parts = title.split(':', 1)
-    company = parts[0] if len(parts) > 1 else ''
-    content_part = parts[1] if len(parts) > 1 else title
+    try:
+        import requests
+        session = requests.Session()
+        session.trust_env = False
+        r = session.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        text = r.content.decode('gbk', errors='replace')
 
-    # 根据不同公告类型生成摘要
-    summary_parts = []
+        # 提取 <div id="content"> 正文
+        m = re.search(r'<div[^>]+id=["\']content["\'][^>]*>(.*?)</div>', text, re.DOTALL)
+        if not m:
+            return None
 
-    if '分红' in content_part or '权益分派' in content_part:
-        # 提取分红相关信息
-        summary_parts.append("年度权益分派实施公告")
-    elif '副行长' in content_part or '行长' in content_part or '总经理' in content_part:
-        summary_parts.append("高管人事任命公告")
-    elif '董事' in content_part and ('决议' in content_part or '通过' in content_part):
-        summary_parts.append("董事会决议公告")
-    elif '股东大会' in content_part or '股东会' in content_part:
-        summary_parts.append("股东大会决议公告")
-    elif '问询函' in content_part or '监管函' in content_part:
-        summary_parts.append("⚠️ 监管问询公告")
-    elif '回购' in content_part:
-        summary_parts.append("股份回购进展公告")
-    elif '增持' in content_part:
-        summary_parts.append("股东增持公告")
-    elif '减持' in content_part:
-        summary_parts.append("⚠️ 股东减持公告")
-    elif '季报' in content_part or '半年报' in content_part or '年报' in content_part:
-        summary_parts.append("定期财务报告")
-    elif '法律意见书' in content_part:
-        summary_parts.append("年度股东大会法律意见书")
-    elif '决议公告' in content_part:
-        summary_parts.append("公司决议公告")
-    else:
-        summary_parts.append(f"公告类型：{category}")
+        content = re.sub(r'<[^>]+>', '', m.group(1))
+        content = re.sub(r'\s+', ' ', content).strip()
+        # 过滤残留词
+        for w in ['查看信息地雷', '新浪财经', '手机版', '收藏', '分享', '附件', '相关', '推荐']:
+            content = content.replace(w, '')
+        content = re.sub(r'\s+', ' ', content).strip()
 
-    if company:
-        summary_parts.insert(0, company)
+        if len(content) < 20:
+            return None
 
-    return ' | '.join(summary_parts)
+        return content[:5000]  # 最多5000字
+
+    except Exception:
+        return None
 

@@ -121,8 +121,10 @@ class PDFRiskAgent:
 
             choices = response.get("choices")
             if not choices or not choices[0]:
-                logger.warning(f"API返回无choices: {response}")
-                return "分析失败: API返回异常"
+                base_resp = response.get("base_resp", {})
+                status_msg = base_resp.get("status_msg", "") or str(response)
+                logger.warning(f"API返回无choices: {status_msg}")
+                return f"分析失败: {status_msg[:200]}"
 
             content = choices[0].get("message", {}).get("content", "")
             if not content:
@@ -227,7 +229,9 @@ class PDFRiskAgent:
 
             choices = response.get("choices")
             if not choices or not choices[0]:
-                return "年报数据分析失败: API返回异常"
+                base_resp = response.get("base_resp", {})
+                status_msg = base_resp.get("status_msg", "") or str(response)
+                return f"年报数据分析失败: {status_msg[:200]}"
 
             content = choices[0].get("message", {}).get("content", "")
             if not content:

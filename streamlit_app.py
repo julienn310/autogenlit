@@ -159,7 +159,7 @@ def get_cached_analysis(symbol: str):
     shared_cache.set_cached_data(symbol, result)
     return result
 
-MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+MINIMAX_API_KEY = "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
 
 def get_api_key():
     # 优先从 Streamlit Secrets（Streamlit Cloud），其次环境变量（本地）
@@ -1428,10 +1428,22 @@ def main():
                     if ann.get('url'):
                         st.markdown(f"[🔗 查看原文]({ann['url']})")
 
-                    # 公告内容摘要
-                    content = _fetch_ann_content(ann)
-                    if content:
-                        st.text(f"📄 {content}"[:300])
+                    # 内容：按需获取（避免50条全部请求拖慢速度）
+                    ann_content_key = f"ann_content_{i}"
+                    cached = st.session_state.get(ann_content_key)
+                    if cached:
+                        with st.expander("📄 公告内容", expanded=True):
+                            st.text(cached)
+                    else:
+                        col_btn, col_status = st.columns([1, 3])
+                        with col_btn:
+                            if st.button("📖 获取内容", key=f"fetch_{i}", use_container_width=True):
+                                with st.spinner("正在获取内容..."):
+                                    content = _fetch_ann_content(ann)
+                                    st.session_state[ann_content_key] = content
+                                st.rerun()
+                        with col_status:
+                            st.caption("点击「📖 获取内容」查看公告正文")
 
                     # 深度解读按钮
                     col_ai, col_spacer = st.columns([1, 3])

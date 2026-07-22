@@ -11,56 +11,54 @@ from src.data.announcement_collector import (
     fetch_content_for_ann,
 )
 
-SYSTEM_PROMPT = """你是一位资深的A股上市公司公告解读专家，擅长从公告中推断公司真实意图和潜在影响。
+SYSTEM_PROMPT = """你是一位资深的A股上市公司公告解读专家，风格犀利、一针见血，擅长从公告字里行间推断公司真实意图。
 
-## 你的任务
-输入一只股票近期的公告列表，你要做的是：
-1. 判断每类公告对公司的真实含义
-2. 识别潜在的积极/消极信号
-3. 推断管理层的真实意图
-4. 给出投资参考建议
+## 输出格式要求
 
-## 公告类型参考
-- **高管变动**：更换管理层可能带来战略调整
-- **业绩公告**：营收/净利润变化反映经营状况
-- **分红配送**：现金分红说明现金流充裕；高送转可能是在做市值管理
-- **回购/增持**：股东或公司回购股票通常意味着认为股价被低估
-- **减持**：股东减持需警惕，但也要看具体原因
-- **关联交易**：需重点关注是否涉及利益输送
-- **监管/问询**：问询函说明监管层关注，处罚则是重大利空
-- **股权变动**：控制权变更属于重大事件
-- **重大合同**：大额订单/中标是经营利好
+**每条公告必须先概括主要内容，再做解读，两者缺一不可。**
 
-## 分析框架
-对每类公告从以下角度分析：
-1. **表面信息**：公告说了什么
-2. **潜在意图**：公司为什么要发这个公告
-3. **对谁有利**：对大股东/管理层/中小股东/债主的影响
-4. **风险提示**：需要警惕的地方
-5. **投资参考**：短线/中线/长线影响
+### 格式模板：
 
-## 输出格式
-请用以下格式输出：
+📌 [公告标题]（[日期]）
+【内容概括】用2-3句话概括这份公告说了什么（50字以内），让读者不看原文也能了解公告核心信息。
+【一针见血】
+   → 潜台词：[管理层实际想表达/隐瞒什么]
+   → 谁受益：[大股东/管理层/中小股东/债权人]
+   → 危险信号 或 利好信号（二选一，理由要说清楚）
+   → 核心结论：[一句话说明这件事对公司的本质影响]
 
-【公告概览】
-近N个月共N条公告，分类分布：XXX
+### 综合研判（在分析完全部公告后输出）
 
-【重要公告解读】
-对每条重要公告按以下格式解读：
+【管理层信心】
+增持/回购次数与减持次数的比例，说明什么？
+高管团队是否稳定？大股东是否有实质性支持动作？
 
-📌 [公告标题]（[日期] [类别]）
-   → 表面信息：[一句话说明]
-   → 潜在意图：[管理层可能的想法]
-   → 影响对象：[对谁影响最大]
-   → 风险/机会：[需警惕的点 或 积极信号]
-   → 投资参考：[短线/中线/长线建议]
+【近期最大风险点】
+按严重程度列出，最多3条，每条要有数据支撑。
 
-【综合研判】
-从公告整体判断：
-- 公司近期战略重心：XXX
-- 管理层信心：XXX（增持/减持/回购情况）
-- 主要风险点：XXX
-- 综合评级：积极 / 中性 / 谨慎 / 警示
+【综合评级】
+积极 / 中性 / 谨慎 / 警示
+理由：不超过30字
+
+## 重点公告类型的解读要点
+
+### 高管变动
+- 新任何职、分管什么业务 → 战略方向可能转向
+- 独立董事批量辞职 → 可能有分歧，内部有问题
+- CFO/财务总监换人 → 财报可能有猫腻，或在准备融资
+
+### 回购/增持
+- 回购价格上限 vs 当前股价 → 底气足不足一看便知
+- 大股东增持 vs 员工持股计划 → 谁在真金白银看好
+
+### 关联交易
+- 向大股东收购资产 → 是否溢价、是否输送利益
+- 对联营公司担保/借款 → 风险是否可控
+
+### 监管问询
+- 问询"会计处理变更" → 可能在调节利润
+- 问询"业绩波动" → 年报可能有水分
+- 多次问询同一问题 → 可能是惯犯，风险极高
 
 直接输出分析内容，不要使用Markdown格式。"""
 
@@ -91,25 +89,23 @@ class AnnouncementAgent:
                 return f"近{days}天无公告记录，请检查股票代码是否正确。"
 
             # 2. 构建上下文
-            ann_context = build_announcement_context(announcements, include_content=False)
+            ann_context = build_announcement_context(announcements, include_content=True)
 
             # 3. 构建prompt
             stock_info = f"{company_name or symbol}（{symbol}）"
-            user_prompt = f"""请分析以下{stock_info}的近期公告：
+            user_prompt = f"""请对以下{stock_info}的近期公告进行犀利的一针见血的解读：
 
 {ann_context}
 
-请仔细阅读以上公告列表，从专业角度解读公司近期动向和管理层意图。
+要求：
+1. 不要简单复述公告内容，要说出公告背后的潜台词
+2. 重点识别：谁在这次公告中获益、谁受损
+3. 关联分析：把同一时间段不同公告串起来看，往往能发现真相
+4. 最关键的问题：如果你是大股东，你为什么要发这个公告？
 
-重点关注：
-1. 各类公告的潜在含义
-2. 高管变动的战略信号
-3. 回购/增持体现的股东态度
-4. 关联交易是否合理
-5. 监管问询的严重程度
-6. 业绩变化的背后原因
+重点关注高管变动、回购增持、关联交易、监管问询、股权变动这五类公告。
 
-请给出综合研判。"""
+给出一针见血的分析结论。"""
 
             messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -125,7 +121,10 @@ class AnnouncementAgent:
 
             choices = response.get("choices")
             if not choices or not choices[0]:
-                return "公告解读失败: API返回异常"
+                # 返回详细错误信息
+                base_resp = response.get("base_resp", {})
+                status_msg = base_resp.get("status_msg", "") or str(response)
+                return f"公告解读失败: {status_msg[:200]}"
 
             content = choices[0].get("message", {}).get("content", "")
             if not content:
@@ -150,23 +149,26 @@ class AnnouncementAgent:
         try:
             # 尝试获取公告正文
             content = fetch_content_for_ann(announcement)
-            content_section = f"\n\n公告正文摘录：\n{content[:500]}" if content else "\n\n（公告正文无法获取，仅基于标题分析）"
+            content_section = f"\n\n公告正文摘录：\n{content[:5000]}" if content else "\n\n（公告正文无法获取，仅基于标题分析）"
 
-            user_prompt = f"""请深度解读以下{company_name or '某公司'}的公告：
+            user_prompt = f"""请对以下{company_name or '某公司'}的公告进行一针见血的深度解读：
 
 标题：{announcement.get('title', '')}
 日期：{announcement.get('date', '')}
 类别：{announcement.get('category', '')}
 来源：{announcement.get('source', '')}{content_section}
 
-请分析：
-1. 这条公告的核心内容是什么？
-2. 公司发布这条公告的真实意图可能是什么？
-3. 对不同利益方（股东/债权人/管理层/中小投资者）的影响？
-4. 需要重点关注的风险或机会点？
-5. 短线和中线的投资参考？
+请按以下格式输出，**先概括内容，再做解读**：
 
-直接输出分析内容，不要使用Markdown格式。"""
+【内容概括】用2-3句话概括公告说了什么，让读者不看原文也能了解核心信息。
+
+【一针见血】
+→ 潜台词：管理层实际想表达/隐瞒什么
+→ 谁受益：谁从这次公告中获益/受损
+→ 危险信号 或 利好信号（二选一，附理由）
+→ 核心结论：这件事对公司的本质影响
+
+直接输出，不要使用Markdown格式。"""
 
             messages = [
                 {"role": "system", "content": self.system_prompt},
@@ -182,7 +184,9 @@ class AnnouncementAgent:
 
             choices = response.get("choices")
             if not choices or not choices[0]:
-                return "单条公告解读失败: API返回异常"
+                base_resp = response.get("base_resp", {})
+                status_msg = base_resp.get("status_msg", "") or str(response)
+                return f"单条公告解读失败: {status_msg[:200]}"
 
             content = choices[0].get("message", {}).get("content", "")
             if not content:
