@@ -162,15 +162,7 @@ def get_cached_analysis(symbol: str):
 MINIMAX_API_KEY = "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
 
 def get_api_key():
-    # 优先从 Streamlit Secrets（Streamlit Cloud），其次环境变量（本地）
-    try:
-        if hasattr(st, "secrets"):
-            secret_key = st.secrets.get("MINIMAX_API_KEY", "")
-            if secret_key:
-                return secret_key
-    except Exception:
-        pass
-    return os.getenv("MINIMAX_API_KEY", "")
+    return "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
 
 # 中文标签映射
 FINANCIAL_METRICS_LABELS = {
