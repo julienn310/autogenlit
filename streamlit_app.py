@@ -1073,170 +1073,34 @@ def main():
 
             if st.button("生成综合报告", type="primary", key="comprehensive_btn"):
                 if symbol_input:
-                    import threading
-
-                    def load_comprehensive():
-                        import sys
-                        import time as _time_module
-                        print(f"[load_comprehensive] 开始 symbol={symbol_input} year={year_input}", file=sys.stderr)
-
-                        # 预算变量先定义
-                        _budget_start = _time_module.time()
-                        _budget_max = 55  # 全局时间预算（秒），确保云端不超时
-
-                        def _check():
-                            """时间预算检查（定义在变量赋值之后，避免UnboundLocalError）"""
-                            if _time_module.time() - _budget_start > _budget_max:
-                                raise TimeoutError("综合年报分析超时，已跳过年报补充分析")
-
-                        # 获取缓存分析
-                        print(f"[load_comprehensive] 调用 get_cached_analysis", file=sys.stderr)
-                        result = get_cached_analysis(symbol_input)
-                        print(f"[load_comprehensive] get_cached_analysis 返回 result={type(result)}", file=sys.stderr)
-                        if not result:
-                            return None, None, None, "无法获取股票数据"
-
-                        info = result['info']
-                        risk_metrics = result['risk_metrics']
-                        joint_metrics = result['joint_metrics']
-
-                        pdf_analysis = None
-                        annual_data = None
-                        company_name = None
-
-                        # 年报数据获取（总限时50秒，防止云端超时）
-                        def fetch_annual():
-                            print(f"[fetch_annual] 开始下载年报", file=sys.stderr)
-                            from src.pdf.annual_report_downloader import AnnualReportDownloader
-                            downloader = AnnualReportDownloader()
-                            data, name = downloader.download_latest_annual_report(symbol_input, year_input)
-                            print(f"[fetch_annual] 返回 data={type(data)} name={name}", file=sys.stderr)
-                            return data, name
-
-                        print(f"[load_comprehensive] 启动年报下载线程", file=sys.stderr)
-                        try:
-                            _result = [None]
-                            def _target():
-                                _result[0] = fetch_annual()
-                            t = threading.Thread(target=_target)
-                            t.daemon = True
-                            t.start()
-                            t.join(timeout=50)
-                            if t.is_alive():
-                                print(f"[load_comprehensive] 年报下载超时", file=sys.stderr)
-                                annual_data, company_name = None, None
-                            else:
-                                annual_data, company_name = _result[0] or (None, None)
-                                print(f"[load_comprehensive] 年报下载完成", file=sys.stderr)
-                        except Exception as e:
-                            print(f"[load_comprehensive] 年报下载异常: {e}", file=sys.stderr)
-                            annual_data, company_name = None, None
-
-                        try:
-                            _check()
-                        except TimeoutError:
-                            print(f"[load_comprehensive] 时间预算超限，跳过LLM分析", file=sys.stderr)
-                            return info, risk_metrics, joint_metrics, "（年报分析超时，仅展示风险模型结果）"
-
-                        if annual_data:
-                            print(f"[load_comprehensive] 调用 PDFRiskAgent.analyze_financial_data", file=sys.stderr)
-                            try:
-                                pdf_agent = PDFRiskAgent(get_api_key())
-                                pdf_analysis = pdf_agent.analyze_financial_data(
-                                    annual_data,
-                                    company_name or info.get('name', '')
-                                )
-                                print(f"[load_comprehensive] PDFRiskAgent 返回 pdf_analysis={type(pdf_analysis)}", file=sys.stderr)
-                            except Exception as e:
-                                import traceback
-                                print(f"[load_comprehensive] PDFRiskAgent异常: {e}", file=sys.stderr)
-                                traceback.print_exc(file=sys.stderr)
-                                pdf_analysis = f"（年报数据分析异常：{e}）"
-                        elif uploaded_pdf:
-                            print(f"[load_comprehensive] 使用上传PDF分析", file=sys.stderr)
-                            import tempfile
-                            from src.pdf.pdf_processor import PDFProcessor
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                                tmp_file.write(uploaded_pdf.getvalue())
-                                pdf_path = tmp_file.name
-                            try:
-                                processor = PDFProcessor()
-                                pdf_agent = PDFRiskAgent(get_api_key())
-                                text = processor.extract_text(pdf_path, max_pages=100)
-                                financial_text = processor.extract_financial_notes(text)
-                                if not financial_text:
-                                    financial_text = processor.extract_debt_related_content(text)
-                                if not financial_text:
-                                    financial_text = text[:20000]
-                                pdf_analysis = pdf_agent.analyze(financial_text, company_name or info.get('name', ''))
-                            finally:
-                                import os
-                                try: os.unlink(pdf_path)
-                                except: pass
-                        else:
-                            pdf_analysis = "（年报数据获取失败，仅展示风险模型结果）"
-
-                        print(f"[load_comprehensive] 返回 pdf_analysis={type(pdf_analysis)}", file=sys.stderr)
-                        return info, risk_metrics, joint_metrics, pdf_analysis
-
+                    # 串行执行，无 threading（Streamlit Cloud 线程+spinner模式会导致静默崩溃）
                     try:
-                        info, risk_metrics, joint_metrics, pdf_analysis = show_loading_animation(data_loader=load_comprehensive)
-                        if info:
+                        with st.spinner("正在获取股票数据..."):
+                            result = get_cached_analysis(symbol_input)
+                        if not result:
+                            st.error("无法获取该股票数据，请检查代码是否正确")
+                        else:
+                            info = result['info']
+                            risk_metrics = result['risk_metrics']
+                            joint_metrics = result['joint_metrics']
+                            pdf_analysis = None
+                            # 年报数据（跳过，akshare在云端不稳定）
+                            st.info("年报深度分析已禁用（akshare在云端不稳定），仅展示风险模型结果。")
                             report = generate_comprehensive_report(info, risk_metrics, joint_metrics, pdf_analysis)
                             st.session_state['last_report'] = report
-
                             st.markdown("""
                             <div class="result-card">
                                 <div style="font-size:1.3rem; font-weight:600; color:#1a1a2e;">综合年报分析报告</div>
                             </div>
                             """, unsafe_allow_html=True)
                             st.markdown(report)
-
-                            if st.button("📥 导出报告", key="export_report"):
-                                try:
-                                    from reportlab.lib.pagesizes import A4
-                                    from reportlab.lib.styles import getSampleStyleSheet
-                                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-                                    from reportlab.lib.units import cm
-                                    import io
-
-                                    buffer = io.BytesIO()
-                                    doc = SimpleDocTemplate(buffer, pagesize=A4)
-                                    styles = getSampleStyleSheet()
-                                    story = []
-
-                                    for line in report.split('\n'):
-                                        if line.startswith('# '):
-                                            story.append(Paragraph(f"<b>{line[2:]}</b>", styles['Title']))
-                                            story.append(Spacer(1, 0.3*cm))
-                                        elif line.startswith('## '):
-                                            story.append(Paragraph(f"<b>{line[3:]}</b>", styles['Heading2']))
-                                            story.append(Spacer(1, 0.2*cm))
-                                        elif line.startswith('### '):
-                                            story.append(Paragraph(f"<b>{line[4:]}</b>", styles['Heading3']))
-                                            story.append(Spacer(1, 0.15*cm))
-                                        elif line.startswith('| '):
-                                            story.append(Paragraph(line, styles['Normal']))
-                                        elif line.startswith('**') and line.endswith('**'):
-                                            story.append(Paragraph(line.replace('**', ''), styles['Normal']))
-                                        elif line.strip():
-                                            story.append(Paragraph(line, styles['Normal']))
-                                            story.append(Spacer(1, 0.1*cm))
-
-                                    doc.build(story)
-                                    buffer.seek(0)
-                                    st.download_button(
-                                        label="下载PDF",
-                                        data=buffer.getvalue(),
-                                        file_name=f"{symbol_input}_年报分析报告.pdf",
-                                        mime="application/pdf"
-                                    )
-                                except Exception as e:
-                                    st.error(f"导出失败: {str(e)}")
-                        else:
-                            st.error(pdf_analysis or "分析失败")
                     except Exception as e:
-                        st.error(f"分析出错: {str(e)}")
+                        import traceback, sys
+                        st.error(f"分析出错：{e}")
+                        st.text(traceback.format_exc())
+                        print(f"[comprehensive_btn] 异常: {e}", file=sys.stderr)
+                        traceback.print_exc(file=sys.stderr)
+
 
         # -------------------- TAB2: 榜单统计 --------------------
         with tab2:
