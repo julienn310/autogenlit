@@ -8,31 +8,6 @@ from datetime import datetime
 import logging
 import re
 import os
-import threading
-
-
-def _run_with_timeout(func, args=(), kwargs=None, timeout_secs=15, default=None):
-    """线程方式超时包装（兼容Windows/Linux，akshare调用专用）"""
-    if kwargs is None:
-        kwargs = {}
-    result = [default]
-    exc = [None]
-
-    def target():
-        try:
-            result[0] = func(*args, **kwargs)
-        except Exception as e:
-            exc[0] = e
-
-    t = threading.Thread(target=target)
-    t.daemon = True
-    t.start()
-    t.join(timeout_secs)
-    if t.is_alive():
-        return default
-    if exc[0]:
-        raise exc[0]
-    return result[0]
 
 # 禁用代理
 os.environ.pop('HTTP_PROXY', None)
@@ -250,11 +225,12 @@ class AStockDataCollector:
             else:
                 market = 'sz'
 
-            # 使用akshare的新接口 stock_zh_a_daily（限时15秒）
-            df = _run_with_timeout(
-                ak.stock_zh_a_daily,
-                args=(f"{market}{symbol_str}", start_date_fmt, end_date_fmt, "qfq"),
-                timeout_secs=15
+            # 使用akshare的新接口 stock_zh_a_daily
+            df = ak.stock_zh_a_daily(
+                symbol=f"{market}{symbol_str}",
+                start_date=start_date_fmt,
+                end_date=end_date_fmt,
+                adjust="qfq"
             )
 
             if df is not None and not df.empty:
@@ -284,7 +260,7 @@ class AStockDataCollector:
             return pd.DataFrame()
 
     def get_financial_data_akshare(self, symbol: str) -> Dict[str, pd.DataFrame]:
-        """使用akshare获取财务报表数据（每个调用10秒超时）"""
+        """使用akshare获取财务报表数据"""
         try:
             import akshare as ak
 
@@ -297,32 +273,29 @@ class AStockDataCollector:
 
             result = {}
 
-            # 利润表（10秒超时）
-            income_df = _run_with_timeout(
-                ak.stock_profit_sheet_by_report_em,
-                args=(f'{market_prefix}{symbol_str}',),
-                timeout_secs=10
-            )
-            if income_df is not None and not income_df.empty:
-                result['income_statement'] = income_df
+            # 利润表
+            try:
+                income_df = ak.stock_profit_sheet_by_report_em(symbol=f'{market_prefix}{symbol_str}')
+                if income_df is not None and not income_df.empty:
+                    result['income_statement'] = income_df
+            except Exception as e:
+                self.logger.error(f"获取利润表失败: {e}")
 
-            # 资产负债表（10秒超时）
-            balance_df = _run_with_timeout(
-                ak.stock_balance_sheet_by_report_em,
-                args=(f'{market_prefix}{symbol_str}',),
-                timeout_secs=10
-            )
-            if balance_df is not None and not balance_df.empty:
-                result['balance_sheet'] = balance_df
+            # 资产负债表
+            try:
+                balance_df = ak.stock_balance_sheet_by_report_em(symbol=f'{market_prefix}{symbol_str}')
+                if balance_df is not None and not balance_df.empty:
+                    result['balance_sheet'] = balance_df
+            except Exception as e:
+                self.logger.error(f"获取资产负债表失败: {e}")
 
-            # 现金流量表（10秒超时）
-            cashflow_df = _run_with_timeout(
-                ak.stock_cash_flow_sheet_by_report_em,
-                args=(f'{market_prefix}{symbol_str}',),
-                timeout_secs=10
-            )
-            if cashflow_df is not None and not cashflow_df.empty:
-                result['cashflow'] = cashflow_df
+            # 现金流量表
+            try:
+                cashflow_df = ak.stock_cash_flow_sheet_by_report_em(symbol=f'{market_prefix}{symbol_str}')
+                if cashflow_df is not None and not cashflow_df.empty:
+                    result['cashflow'] = cashflow_df
+            except Exception as e:
+                self.logger.error(f"获取现金流量表失败: {e}")
 
             return result
         except Exception as e:

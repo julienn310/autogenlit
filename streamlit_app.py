@@ -9,6 +9,7 @@ import os
 import pandas as pd
 import threading
 from pathlib import Path
+import time
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -232,22 +233,107 @@ def display_interpretation(text, label="解读"):
         st.markdown(f"<div class='interpretation'><strong>{label}:</strong> {text}</div>", unsafe_allow_html=True)
 
 def show_loading_animation(data_loader=None, data_args=None):
-    """
-    简单包装：直接调用 data_loader，无 threading。
-    Streamlit Cloud 环境下 threading+spinner 混用会导致静默崩溃，
-    改用串行执行，所有异常都能被上层 try/except 捕获并正常显示。
-    """
+    """光圈 + spinner 双动画 + 专业语句循环"""
+    phases = [
+        "正在检索数据源",
+        "正在连接数据接口",
+        "正在清洗与校验",
+        "正在解析返回数据",
+        "正在构建模型参数",
+        "正在初始化模型",
+        "正在交叉验证推演",
+        "正在计算特征值",
+        "正在整合多维指标",
+        "正在生成风险因子",
+        "正在生成风险洞察",
+        "正在整理分析结果",
+        "正在深度校验",
+        "正在多重比对",
+        "正在优化权重配置",
+        "正在生成风险矩阵",
+        "正在传回计算结果",
+        "正在整合结果",
+        "正在完成最终报告",
+    ]
+
     if data_loader is None:
-        return None
-    try:
-        return data_loader(*data_args) if data_args else data_loader()
-    except Exception as e:
-        import traceback
-        import sys
-        print(f"[show_loading_animation ERROR] {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        st.error(f"加载异常：{e}")
-        return None
+        return
+
+    result = [None]
+    error = [None]
+
+    def load():
+        try:
+            result[0] = data_loader(*data_args) if data_args else data_loader()
+        except Exception as e:
+            error[0] = e
+
+    t = threading.Thread(target=load)
+    t.start()
+
+    status_ph = st.empty()
+    spinner_ph = st.empty()
+
+    spinner_html = """
+    <style>
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .loading-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+    .spinner-ring {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #e8e8e8;
+        border-top: 4px solid #667eea;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    .spinner-inner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid #e8e8e8;
+        border-bottom: 3px solid #764ba2;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite reverse;
+        margin-top: -46px;
+    }
+    </style>
+    <div class="loading-container">
+        <div class="spinner-ring"></div>
+        <div class="spinner-inner"></div>
+    </div>
+    """
+
+    idx = 0
+    while t.is_alive():
+        phase = phases[idx % len(phases)]
+        dots = "." * ((idx % 3) + 1)
+        spinner_ph.markdown(spinner_html, unsafe_allow_html=True)
+        status_ph.markdown(
+            f"<p style='text-align:center; color:#667eea; font-weight:600; font-size:15px; margin-top:5px;'>{phase}{dots}</p>",
+            unsafe_allow_html=True
+        )
+        time.sleep(1.0)
+        idx += 1
+
+    t.join()
+    spinner_ph.empty()
+    status_ph.empty()
+
+    if error[0]:
+        raise error[0]
+    return result[0]
 
 def mscore_warning_expander():
     """返回M-Score警告的展开式提示（兼容Streamlit）"""
@@ -1073,34 +1159,116 @@ def main():
 
             if st.button("生成综合报告", type="primary", key="comprehensive_btn"):
                 if symbol_input:
-                    # 串行执行，无 threading（Streamlit Cloud 线程+spinner模式会导致静默崩溃）
-                    try:
-                        with st.spinner("正在获取股票数据..."):
-                            result = get_cached_analysis(symbol_input)
+                    def load_comprehensive():
+                        # 获取缓存分析
+                        result = get_cached_analysis(symbol_input)
                         if not result:
-                            st.error("无法获取该股票数据，请检查代码是否正确")
+                            return None, None, None, "无法获取股票数据"
+
+                        info = result['info']
+                        risk_metrics = result['risk_metrics']
+                        joint_metrics = result['joint_metrics']
+
+                        pdf_analysis = None
+                        annual_data = None
+
+                        from src.pdf.annual_report_downloader import AnnualReportDownloader
+                        downloader = AnnualReportDownloader()
+                        annual_data, company_name = downloader.download_latest_annual_report(symbol_input, year_input)
+
+                        if annual_data:
+                            try:
+                                pdf_agent = PDFRiskAgent(get_api_key())
+                                pdf_analysis = pdf_agent.analyze_financial_data(
+                                    annual_data,
+                                    company_name or info.get('name', '')
+                                )
+                            except Exception as e:
+                                pdf_analysis = f"（年报数据分析异常：{e}）"
+                        elif uploaded_pdf:
+                            # PDF上传作为补充数据源
+                            import tempfile
+                            from src.pdf.pdf_processor import PDFProcessor
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                                tmp_file.write(uploaded_pdf.getvalue())
+                                pdf_path = tmp_file.name
+                            try:
+                                processor = PDFProcessor()
+                                pdf_agent = PDFRiskAgent(get_api_key())
+                                text = processor.extract_text(pdf_path, max_pages=100)
+                                financial_text = processor.extract_financial_notes(text)
+                                if not financial_text:
+                                    financial_text = processor.extract_debt_related_content(text)
+                                if not financial_text:
+                                    financial_text = text[:20000]
+                                pdf_analysis = pdf_agent.analyze(financial_text, company_name or info.get('name', ''))
+                            finally:
+                                import os
+                                try: os.unlink(pdf_path)
+                                except: pass
                         else:
-                            info = result['info']
-                            risk_metrics = result['risk_metrics']
-                            joint_metrics = result['joint_metrics']
-                            pdf_analysis = None
-                            # 年报数据（跳过，akshare在云端不稳定）
-                            st.info("年报深度分析已禁用（akshare在云端不稳定），仅展示风险模型结果。")
+                            pdf_analysis = "（年报数据获取失败）"
+
+                        return info, risk_metrics, joint_metrics, pdf_analysis
+
+                    try:
+                        info, risk_metrics, joint_metrics, pdf_analysis = show_loading_animation(data_loader=load_comprehensive)
+                        if info:
                             report = generate_comprehensive_report(info, risk_metrics, joint_metrics, pdf_analysis)
                             st.session_state['last_report'] = report
+
                             st.markdown("""
                             <div class="result-card">
                                 <div style="font-size:1.3rem; font-weight:600; color:#1a1a2e;">综合年报分析报告</div>
                             </div>
                             """, unsafe_allow_html=True)
                             st.markdown(report)
-                    except Exception as e:
-                        import traceback, sys
-                        st.error(f"分析出错：{e}")
-                        st.text(traceback.format_exc())
-                        print(f"[comprehensive_btn] 异常: {e}", file=sys.stderr)
-                        traceback.print_exc(file=sys.stderr)
 
+                            if st.button("📥 导出报告", key="export_report"):
+                                try:
+                                    from reportlab.lib.pagesizes import A4
+                                    from reportlab.lib.styles import getSampleStyleSheet
+                                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+                                    from reportlab.lib.units import cm
+                                    import io
+
+                                    buffer = io.BytesIO()
+                                    doc = SimpleDocTemplate(buffer, pagesize=A4)
+                                    styles = getSampleStyleSheet()
+                                    story = []
+
+                                    for line in report.split('\n'):
+                                        if line.startswith('# '):
+                                            story.append(Paragraph(f"<b>{line[2:]}</b>", styles['Title']))
+                                            story.append(Spacer(1, 0.3*cm))
+                                        elif line.startswith('## '):
+                                            story.append(Paragraph(f"<b>{line[3:]}</b>", styles['Heading2']))
+                                            story.append(Spacer(1, 0.2*cm))
+                                        elif line.startswith('### '):
+                                            story.append(Paragraph(f"<b>{line[4:]}</b>", styles['Heading3']))
+                                            story.append(Spacer(1, 0.15*cm))
+                                        elif line.startswith('| '):
+                                            story.append(Paragraph(line, styles['Normal']))
+                                        elif line.startswith('**') and line.endswith('**'):
+                                            story.append(Paragraph(line.replace('**', ''), styles['Normal']))
+                                        elif line.strip():
+                                            story.append(Paragraph(line, styles['Normal']))
+                                            story.append(Spacer(1, 0.1*cm))
+
+                                    doc.build(story)
+                                    buffer.seek(0)
+                                    st.download_button(
+                                        label="下载PDF",
+                                        data=buffer.getvalue(),
+                                        file_name=f"{symbol_input}_年报分析报告.pdf",
+                                        mime="application/pdf"
+                                    )
+                                except Exception as e:
+                                    st.error(f"导出失败: {str(e)}")
+                        else:
+                            st.error(pdf_analysis or "分析失败")
+                    except Exception as e:
+                        st.error(f"分析出错: {str(e)}")
 
         # -------------------- TAB2: 榜单统计 --------------------
         with tab2:

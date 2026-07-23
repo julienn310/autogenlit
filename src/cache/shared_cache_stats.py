@@ -69,6 +69,7 @@ class SharedCacheStats:
                 conn.execute("""
                     INSERT INTO cache_stats (key, value) VALUES ('total_hits', 1)
                     ON CONFLICT(key) DO UPDATE SET value = value + 1
+                    WHERE key = 'total_hits'
                 """)
                 conn.commit()
             finally:
@@ -82,6 +83,7 @@ class SharedCacheStats:
                 conn.execute("""
                     INSERT INTO cache_stats (key, value) VALUES ('total_misses', 1)
                     ON CONFLICT(key) DO UPDATE SET value = value + 1
+                    WHERE key = 'total_misses'
                 """)
                 conn.commit()
             finally:
