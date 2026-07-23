@@ -233,7 +233,29 @@ def display_interpretation(text, label="解读"):
         st.markdown(f"<div class='interpretation'><strong>{label}:</strong> {text}</div>", unsafe_allow_html=True)
 
 def show_loading_animation(data_loader=None, data_args=None):
-    """简单的 Streamlit spinner（避免 threading + Streamlit 混用导致的崩溃）"""
+    """光圈 + spinner 双动画 + 专业语句循环"""
+    phases = [
+        "正在检索数据源",
+        "正在连接数据接口",
+        "正在清洗与校验",
+        "正在解析返回数据",
+        "正在构建模型参数",
+        "正在初始化模型",
+        "正在交叉验证推演",
+        "正在计算特征值",
+        "正在整合多维指标",
+        "正在生成风险因子",
+        "正在生成风险洞察",
+        "正在整理分析结果",
+        "正在深度校验",
+        "正在多重比对",
+        "正在优化权重配置",
+        "正在生成风险矩阵",
+        "正在传回计算结果",
+        "正在整合结果",
+        "正在完成最终报告",
+    ]
+
     if data_loader is None:
         return
 
@@ -242,18 +264,89 @@ def show_loading_animation(data_loader=None, data_args=None):
 
     def load():
         try:
+            import sys
+            print(f"[LOADER] 开始执行 data_loader", file=sys.stderr)
             result[0] = data_loader(*data_args) if data_args else data_loader()
+            print(f"[LOADER] data_loader 执行完成", file=sys.stderr)
         except Exception as e:
+            import traceback
             error[0] = e
+            import sys
+            print(f"[LOAD ERROR] {type(e).__name__}: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
 
-    t = threading.Thread(target=load, daemon=True)
+    t = threading.Thread(target=load)
     t.start()
-    # Streamlit 原生 spinner，渲染在主线程，不存在跨线程 UI 更新问题
-    with st.spinner("正在分析，请稍候..."):
-        t.join()
+
+    status_ph = st.empty()
+    spinner_ph = st.empty()
+
+    spinner_html = """
+    <style>
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .loading-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+    .spinner-ring {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #e8e8e8;
+        border-top: 4px solid #667eea;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    .spinner-inner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid #e8e8e8;
+        border-bottom: 3px solid #764ba2;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite reverse;
+        margin-top: -46px;
+    }
+    </style>
+    <div class="loading-container">
+        <div class="spinner-ring"></div>
+        <div class="spinner-inner"></div>
+    </div>
+    """
+
+    idx = 0
+    while t.is_alive():
+        phase = phases[idx % len(phases)]
+        dots = "." * ((idx % 3) + 1)
+        spinner_ph.markdown(spinner_html, unsafe_allow_html=True)
+        status_ph.markdown(
+            f"<p style='text-align:center; color:#667eea; font-weight:600; font-size:15px; margin-top:5px;'>{phase}{dots}</p>",
+            unsafe_allow_html=True
+        )
+        time.sleep(1.0)
+        idx += 1
+
+    t.join()
+    spinner_ph.empty()
+    status_ph.empty()
 
     if error[0]:
-        raise error[0]
+        import traceback
+        import sys
+        err_str = f"[加载失败] {type(error[0]).__name__}: {error[0]}"
+        print(err_str, file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        st.error(f"⚠️ {err_str}")
+        st.text(traceback.format_exc())
+        return None
     return result[0]
 
 def mscore_warning_expander():
@@ -1083,6 +1176,9 @@ def main():
                     import threading
 
                     def load_comprehensive():
+                        import sys
+                        print(f"[load_comprehensive] 开始 symbol={symbol_input} year={year_input}", file=sys.stderr)
+
                         _budget_start = time.time()
                         _budget_max = 55  # 全局时间预算（秒），确保云端不超时
 
@@ -1091,7 +1187,9 @@ def main():
                                 raise TimeoutError("综合年报分析超时，已跳过年报补充分析")
 
                         # 获取缓存分析
+                        print(f"[load_comprehensive] 调用 get_cached_analysis", file=sys.stderr)
                         result = get_cached_analysis(symbol_input)
+                        print(f"[load_comprehensive] get_cached_analysis 返回 result={type(result)}", file=sys.stderr)
                         if not result:
                             return None, None, None, "无法获取股票数据"
 
@@ -1105,10 +1203,14 @@ def main():
 
                         # 年报数据获取（总限时50秒，防止云端超时）
                         def fetch_annual():
+                            print(f"[fetch_annual] 开始下载年报", file=sys.stderr)
                             from src.pdf.annual_report_downloader import AnnualReportDownloader
                             downloader = AnnualReportDownloader()
-                            return downloader.download_latest_annual_report(symbol_input, year_input)
+                            data, name = downloader.download_latest_annual_report(symbol_input, year_input)
+                            print(f"[fetch_annual] 返回 data={type(data)} name={name}", file=sys.stderr)
+                            return data, name
 
+                        print(f"[load_comprehensive] 启动年报下载线程", file=sys.stderr)
                         try:
                             _result = [None]
                             def _target():
@@ -1118,28 +1220,37 @@ def main():
                             t.start()
                             t.join(timeout=50)
                             if t.is_alive():
+                                print(f"[load_comprehensive] 年报下载超时", file=sys.stderr)
                                 annual_data, company_name = None, None
                             else:
                                 annual_data, company_name = _result[0] or (None, None)
-                        except Exception:
+                                print(f"[load_comprehensive] 年报下载完成", file=sys.stderr)
+                        except Exception as e:
+                            print(f"[load_comprehensive] 年报下载异常: {e}", file=sys.stderr)
                             annual_data, company_name = None, None
 
-                        _check()  # 时间预算检查
+                        try:
+                            _check()
+                        except TimeoutError:
+                            print(f"[load_comprehensive] 时间预算超限，跳过LLM分析", file=sys.stderr)
+                            return info, risk_metrics, joint_metrics, "（年报分析超时，仅展示风险模型结果）"
 
                         if annual_data:
+                            print(f"[load_comprehensive] 调用 PDFRiskAgent.analyze_financial_data", file=sys.stderr)
                             try:
-                                _check()  # LLM调用前时间预算检查
                                 pdf_agent = PDFRiskAgent(get_api_key())
                                 pdf_analysis = pdf_agent.analyze_financial_data(
                                     annual_data,
                                     company_name or info.get('name', '')
                                 )
-                            except TimeoutError:
-                                pdf_analysis = "（年报LLM分析超时，已展示风险模型结果）"
+                                print(f"[load_comprehensive] PDFRiskAgent 返回 pdf_analysis={type(pdf_analysis)}", file=sys.stderr)
                             except Exception as e:
+                                import traceback
+                                print(f"[load_comprehensive] PDFRiskAgent异常: {e}", file=sys.stderr)
+                                traceback.print_exc(file=sys.stderr)
                                 pdf_analysis = f"（年报数据分析异常：{e}）"
                         elif uploaded_pdf:
-                            # PDF上传作为补充数据源
+                            print(f"[load_comprehensive] 使用上传PDF分析", file=sys.stderr)
                             import tempfile
                             from src.pdf.pdf_processor import PDFProcessor
                             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
@@ -1162,6 +1273,7 @@ def main():
                         else:
                             pdf_analysis = "（年报数据获取失败，仅展示风险模型结果）"
 
+                        print(f"[load_comprehensive] 返回 pdf_analysis={type(pdf_analysis)}", file=sys.stderr)
                         return info, risk_metrics, joint_metrics, pdf_analysis
 
                     try:
