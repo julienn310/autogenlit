@@ -4,9 +4,71 @@
 """
 
 import logging
+import signal
+import functools
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+class TimeoutError(Exception):
+    """超时异常"""
+    pass
+
+
+def timeout(seconds: int, default=None):
+    """函数超时装饰器（适用于Linux/Mac，Windows下默认返回default）"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                def handler(signum, frame):
+                    raise TimeoutError(f"{func.__name__} 调用超时({seconds}秒)")
+                old_handler = signal.signal(signal.SIGALRM, handler)
+                signal.alarm(seconds)
+                try:
+                    result = func(*args, **kwargs)
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+                return result
+            except (TimeoutError, OSError, ValueError):
+                # Windows不支持SIGALRM，或收到无效信号，直接执行
+                return default if default is not None else None
+            except Exception as e:
+                logger.debug(f"{func.__name__} 执行异常: {e}")
+                return default if default is not None else None
+        return wrapper
+    return decorator
+
+
+# Windows信号不支持SIGALRM，用线程方式实现超时
+import threading
+
+
+def run_with_timeout(func, args=(), kwargs=None, timeout_secs=15, default=None):
+    """线程方式超时包装（兼容Windows）"""
+    if kwargs is None:
+        kwargs = {}
+    result = [default]
+    exc = [None]
+
+    def target():
+        try:
+            result[0] = func(*args, **kwargs)
+        except Exception as e:
+            exc[0] = e
+
+    t = threading.Thread(target=target)
+    t.daemon = True
+    t.start()
+    t.join(timeout_secs)
+    if t.is_alive():
+        # 线程仍在运行，超时
+        return default
+    if exc[0]:
+        raise exc[0]
+    return result[0]
 
 
 class AnnualReportDownloader:
@@ -46,21 +108,34 @@ class AnnualReportDownloader:
             sec_code = f"{symbol}.SZ"
 
         try:
+            # 每个akshare调用独立超时（15秒），避免单个卡住导致整体超时
             # 获取财务指标
-            indicator_df = ak.stock_financial_analysis_indicator_em(symbol=sec_code)
+            indicator_df = run_with_timeout(
+                ak.stock_financial_analysis_indicator_em,
+                args=(sec_code,), timeout_secs=15
+            )
 
             # 获取利润表
-            profit_df = ak.stock_profit_sheet_by_report_em(symbol=sec_code)
+            profit_df = run_with_timeout(
+                ak.stock_profit_sheet_by_report_em,
+                args=(sec_code,), timeout_secs=15
+            )
 
             # 获取资产负债表
-            balance_df = ak.stock_balance_sheet_by_report_em(symbol=sec_code)
+            balance_df = run_with_timeout(
+                ak.stock_balance_sheet_by_report_em,
+                args=(sec_code,), timeout_secs=15
+            )
 
             # 获取现金流量表
-            cashflow_df = ak.stock_cash_flow_sheet_by_report_em(symbol=sec_code)
+            cashflow_df = run_with_timeout(
+                ak.stock_cash_flow_sheet_by_report_em,
+                args=(sec_code,), timeout_secs=15
+            )
 
             # 获取公司名称
             name = None
-            if not indicator_df.empty:
+            if indicator_df is not None and not indicator_df.empty:
                 name = indicator_df['SECURITY_NAME_ABBR'].iloc[0]
 
             # 获取附注信息（供应商/客户/上下游相关）
@@ -120,14 +195,11 @@ class AnnualReportDownloader:
         return notes
 
     def _get_related_party_transactions(self, ak, sec_code: str):
-        """获取关联交易明细"""
-        try:
-            # 东方财富关联交易
-            df = ak.stock_related_party_transaction_em(symbol=sec_code)
-            return df
-        except Exception:
-            pass
-        return None
+        """获取关联交易明细（带超时）"""
+        return run_with_timeout(
+            ak.stock_related_party_transaction_em,
+            args=(sec_code,), timeout_secs=10
+        )
 
     def _get_supplier_customer(self, ak, symbol: str) -> Optional[dict]:
         """
@@ -142,21 +214,21 @@ class AnnualReportDownloader:
             else:
                 em_code = f"SZ{symbol}"
 
-            # 获取主要客户销售占比
-            try:
-                customer_df = ak.stock_main_customer_em(symbol=em_code)
-                if customer_df is not None and not customer_df.empty:
-                    result['customers'] = customer_df
-            except Exception:
-                pass
+            # 获取主要客户销售占比（超时保护）
+            customer_df = run_with_timeout(
+                ak.stock_main_customer_em,
+                args=(em_code,), timeout_secs=10
+            )
+            if customer_df is not None and not customer_df.empty:
+                result['customers'] = customer_df
 
-            # 获取主要供应商采购占比
-            try:
-                supplier_df = ak.stock_main_supplier_em(symbol=em_code)
-                if supplier_df is not None and not supplier_df.empty:
-                    result['suppliers'] = supplier_df
-            except Exception:
-                pass
+            # 获取主要供应商采购占比（超时保护）
+            supplier_df = run_with_timeout(
+                ak.stock_main_supplier_em,
+                args=(em_code,), timeout_secs=10
+            )
+            if supplier_df is not None and not supplier_df.empty:
+                result['suppliers'] = supplier_df
 
         except Exception as e:
             logger.debug(f"供应商客户信息获取异常: {e}")

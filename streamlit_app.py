@@ -1159,7 +1159,17 @@ def main():
 
             if st.button("生成综合报告", type="primary", key="comprehensive_btn"):
                 if symbol_input:
+                    import threading
+
                     def load_comprehensive():
+                        import time
+                        _start = time.time()
+                        _max = 55  # 全局时间预算（秒），确保云端不超时
+
+                        def _check():
+                            if time.time() - _start > _max:
+                                raise TimeoutError("综合年报分析超时，已跳过年报补充分析")
+
                         # 获取缓存分析
                         result = get_cached_analysis(symbol_input)
                         if not result:
@@ -1171,18 +1181,41 @@ def main():
 
                         pdf_analysis = None
                         annual_data = None
+                        company_name = None
 
-                        from src.pdf.annual_report_downloader import AnnualReportDownloader
-                        downloader = AnnualReportDownloader()
-                        annual_data, company_name = downloader.download_latest_annual_report(symbol_input, year_input)
+                        # 年报数据获取（总限时50秒，防止云端超时）
+                        def fetch_annual():
+                            from src.pdf.annual_report_downloader import AnnualReportDownloader
+                            downloader = AnnualReportDownloader()
+                            return downloader.download_latest_annual_report(symbol_input, year_input)
+
+                        try:
+                            _result = [None]
+                            def _target():
+                                _result[0] = fetch_annual()
+                            t = threading.Thread(target=_target)
+                            t.daemon = True
+                            t.start()
+                            t.join(timeout=50)
+                            if t.is_alive():
+                                annual_data, company_name = None, None
+                            else:
+                                annual_data, company_name = _result[0] or (None, None)
+                        except Exception:
+                            annual_data, company_name = None, None
+
+                        _check()  # 时间预算检查
 
                         if annual_data:
                             try:
+                                _check()  # LLM调用前时间预算检查
                                 pdf_agent = PDFRiskAgent(get_api_key())
                                 pdf_analysis = pdf_agent.analyze_financial_data(
                                     annual_data,
                                     company_name or info.get('name', '')
                                 )
+                            except TimeoutError:
+                                pdf_analysis = "（年报LLM分析超时，已展示风险模型结果）"
                             except Exception as e:
                                 pdf_analysis = f"（年报数据分析异常：{e}）"
                         elif uploaded_pdf:
@@ -1207,7 +1240,7 @@ def main():
                                 try: os.unlink(pdf_path)
                                 except: pass
                         else:
-                            pdf_analysis = "（年报数据获取失败）"
+                            pdf_analysis = "（年报数据获取失败，仅展示风险模型结果）"
 
                         return info, risk_metrics, joint_metrics, pdf_analysis
 
