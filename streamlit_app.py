@@ -8,7 +8,6 @@ import sys
 import os
 import pandas as pd
 from pathlib import Path
-import time
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -456,6 +455,20 @@ def main():
         with col3: st.metric("智能体数量", "4", "协作分析")
         with col4: st.metric("PDF分析", "支持", "年报风险识别")
 
+        # ========== 网络状态诊断 ==========
+        import requests as _req
+        try:
+            test_r = _req.get("https://hq.sinajs.cn/list=sh000001", timeout=5)
+            network_ok = test_r.status_code == 200
+        except Exception:
+            network_ok = False
+
+        if not network_ok:
+            st.warning("⚠️ **网络环境提示**：检测到无法访问中国大陆金融数据源（东方财富/新浪财经）。"
+                       "这通常是因为 Streamlit Cloud 服务器在海外，中国金融 API 被屏蔽。"
+                       "**本地部署可正常使用，云端部署需要配置代理或使用境外可访问的数据源。**")
+            st.divider()
+
         # ========== 全球市场行情 ==========
         st.markdown('<div class="section-title">🌏 全球市场行情</div>', unsafe_allow_html=True)
 
@@ -495,7 +508,7 @@ def main():
                 for d in global_stocks[:7]:
                     st.markdown(render_index_row(d), unsafe_allow_html=True)
         else:
-            st.info("行情数据暂时不可用（网络环境限制）")
+            st.warning("行情数据暂时不可用（网络环境限制）")
 
         st.divider()
 
