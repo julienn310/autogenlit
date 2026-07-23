@@ -233,29 +233,7 @@ def display_interpretation(text, label="解读"):
         st.markdown(f"<div class='interpretation'><strong>{label}:</strong> {text}</div>", unsafe_allow_html=True)
 
 def show_loading_animation(data_loader=None, data_args=None):
-    """光圈 + spinner 双动画 + 专业语句循环"""
-    phases = [
-        "正在检索数据源",
-        "正在连接数据接口",
-        "正在清洗与校验",
-        "正在解析返回数据",
-        "正在构建模型参数",
-        "正在初始化模型",
-        "正在交叉验证推演",
-        "正在计算特征值",
-        "正在整合多维指标",
-        "正在生成风险因子",
-        "正在生成风险洞察",
-        "正在整理分析结果",
-        "正在深度校验",
-        "正在多重比对",
-        "正在优化权重配置",
-        "正在生成风险矩阵",
-        "正在传回计算结果",
-        "正在整合结果",
-        "正在完成最终报告",
-    ]
-
+    """简单的 Streamlit spinner（避免 threading + Streamlit 混用导致的崩溃）"""
     if data_loader is None:
         return
 
@@ -268,68 +246,11 @@ def show_loading_animation(data_loader=None, data_args=None):
         except Exception as e:
             error[0] = e
 
-    t = threading.Thread(target=load)
+    t = threading.Thread(target=load, daemon=True)
     t.start()
-
-    status_ph = st.empty()
-    spinner_ph = st.empty()
-
-    spinner_html = """
-    <style>
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-    }
-    .loading-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-    }
-    .spinner-ring {
-        width: 50px;
-        height: 50px;
-        border: 4px solid #e8e8e8;
-        border-top: 4px solid #667eea;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-    }
-    .spinner-inner {
-        width: 36px;
-        height: 36px;
-        border: 3px solid #e8e8e8;
-        border-bottom: 3px solid #764ba2;
-        border-radius: 50%;
-        animation: spin 0.6s linear infinite reverse;
-        margin-top: -46px;
-    }
-    </style>
-    <div class="loading-container">
-        <div class="spinner-ring"></div>
-        <div class="spinner-inner"></div>
-    </div>
-    """
-
-    idx = 0
-    while t.is_alive():
-        phase = phases[idx % len(phases)]
-        dots = "." * ((idx % 3) + 1)
-        spinner_ph.markdown(spinner_html, unsafe_allow_html=True)
-        status_ph.markdown(
-            f"<p style='text-align:center; color:#667eea; font-weight:600; font-size:15px; margin-top:5px;'>{phase}{dots}</p>",
-            unsafe_allow_html=True
-        )
-        time.sleep(1.0)
-        idx += 1
-
-    t.join()
-    spinner_ph.empty()
-    status_ph.empty()
+    # Streamlit 原生 spinner，渲染在主线程，不存在跨线程 UI 更新问题
+    with st.spinner("正在分析，请稍候..."):
+        t.join()
 
     if error[0]:
         raise error[0]
