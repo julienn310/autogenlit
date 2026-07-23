@@ -1,7 +1,6 @@
 """
 共享缓存统计模块 - SQLite 实现
 为所有用户提供统一的缓存命中/未命中统计，以及跨用户数据共享
-支持文件不可写时降级到内存模式（适配 Streamlit Cloud 等受限环境）
 """
 
 import sqlite3
@@ -13,73 +12,57 @@ from typing import Optional
 
 _db_lock = threading.Lock()
 _db_path = Path(__file__).parent / "cache_stats.db"
-_use_memory = False  # 文件不可写时降级为内存模式
-_memory_conn: Optional[sqlite3.Connection] = None
 
 
 def _get_conn() -> sqlite3.Connection:
     """获取数据库连接（线程安全）"""
-    global _memory_conn
-    if _use_memory:
-        if _memory_conn is None:
-            _memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
-            _init_schema(_memory_conn)
-        return _memory_conn
-    return sqlite3.connect(str(_db_path), check_same_thread=False)
-
-
-def _init_schema(conn: sqlite3.Connection):
-    """在指定连接上初始化表结构"""
+    conn = sqlite3.connect(str(_db_path), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS cache_stats (
-            key TEXT PRIMARY KEY,
-            value INTEGER DEFAULT 0
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS symbol_cache (
-            symbol TEXT PRIMARY KEY,
-            data TEXT,
-            cached_at REAL,
-            analysis_count INTEGER DEFAULT 1
-        )
-    """)
-    try:
-        conn.execute("ALTER TABLE symbol_cache ADD COLUMN analysis_count INTEGER DEFAULT 1")
-    except Exception:
-        pass
-    conn.commit()
+    return conn
 
 
 def _init_db():
-    """初始化数据库表（文件不可写时降级到内存模式）"""
-    global _use_memory
+    """初始化数据库表"""
+    conn = _get_conn()
     try:
-        # 尝试创建文件并写入，如果路径不可写则抛出异常
-        _db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(_db_path), check_same_thread=False)
-        _init_schema(conn)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cache_stats (
+                key TEXT PRIMARY KEY,
+                value INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_cache (
+                symbol TEXT PRIMARY KEY,
+                data TEXT,
+                cached_at REAL,
+                analysis_count INTEGER DEFAULT 1
+            )
+        """)
+        # 确保 analysis_count 列存在（兼容已有数据库）
+        try:
+            conn.execute("ALTER TABLE symbol_cache ADD COLUMN analysis_count INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        conn.commit()
+    finally:
         conn.close()
-    except Exception:
-        # 文件不可写，降级到内存模式
-        _use_memory = True
 
 
-# 模块级初始化（try/except 防止 Streamlit Cloud 文件系统只读导致崩溃）
-try:
-    _init_db()
-except Exception:
-    _use_memory = True
+_init_db()
 
 
 class SharedCacheStats:
-    """轻量级共享缓存统计（SQLite，异常安全）"""
+    """
+    轻量级共享缓存统计（SQLite）
+    所有用户共享同一数据库文件
+    """
 
     def __init__(self):
         pass
 
     def record_hit(self, symbol: str) -> None:
+        """记录缓存命中"""
         with _db_lock:
             conn = _get_conn()
             try:
@@ -93,6 +76,7 @@ class SharedCacheStats:
                 conn.close()
 
     def record_miss(self) -> None:
+        """记录缓存未命中"""
         with _db_lock:
             conn = _get_conn()
             try:
@@ -106,23 +90,27 @@ class SharedCacheStats:
                 conn.close()
 
     def get_stats(self) -> dict:
+        """获取缓存统计"""
         with _db_lock:
             conn = _get_conn()
             try:
                 cursor = conn.execute("SELECT key, value FROM cache_stats")
                 rows = cursor.fetchall()
                 stats = {row[0]: row[1] for row in rows}
+
                 cursor2 = conn.execute("SELECT COUNT(*) FROM symbol_cache")
                 cached_count = cursor2.fetchone()[0]
+
                 return {
                     'total_hits': stats.get('total_hits', 0),
                     'total_misses': stats.get('total_misses', 0),
-                    'cached_symbols': cached_count,
+                    'cached_symbols': cached_count
                 }
             finally:
                 conn.close()
 
     def is_cached(self, symbol: str) -> bool:
+        """检查符号是否已缓存（跨用户）"""
         with _db_lock:
             conn = _get_conn()
             try:
@@ -134,6 +122,7 @@ class SharedCacheStats:
                 conn.close()
 
     def get_cached_data(self, symbol: str) -> Optional[dict]:
+        """获取缓存的数据"""
         with _db_lock:
             conn = _get_conn()
             try:
@@ -148,6 +137,7 @@ class SharedCacheStats:
                 conn.close()
 
     def set_cached_data(self, symbol: str, data: dict) -> None:
+        """存储缓存数据"""
         with _db_lock:
             conn = _get_conn()
             try:
@@ -170,6 +160,11 @@ class SharedCacheStats:
         return time.time()
 
     def get_ranking(self, limit: int = 20) -> list:
+        """获取分析次数排行榜
+
+        Returns:
+            list of dict: [{'symbol': '000001', 'name': '平安银行', 'count': 5, 'cached_at': timestamp}, ...]
+        """
         with _db_lock:
             conn = _get_conn()
             try:
@@ -180,6 +175,7 @@ class SharedCacheStats:
                     LIMIT ?
                 """, (limit,))
                 rows = cursor.fetchall()
+
                 result = []
                 for row in rows:
                     symbol = row[0]
@@ -207,6 +203,7 @@ _shared_stats: Optional[SharedCacheStats] = None
 
 
 def get_shared_cache_stats() -> SharedCacheStats:
+    """获取共享缓存统计单例"""
     global _shared_stats
     if _shared_stats is None:
         _shared_stats = SharedCacheStats()

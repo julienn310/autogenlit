@@ -22,32 +22,18 @@ class AnnualReportDownloader:
             self._ak = ak
         return self._ak
 
-    def download_latest_annual_report(self, symbol: str, year: int = None, timeout: int = 15) -> Tuple[Optional[dict], Optional[str]]:
+    def download_latest_annual_report(self, symbol: str, year: int = None) -> Tuple[Optional[dict], Optional[str]]:
         """
         获取年报数据（不下载PDF，直接通过akshare获取财务数据）
-        带超时保护，适配 Streamlit Cloud 等受限环境
 
         Args:
             symbol: 股票代码，如 "000001"
             year: 指定年份，不指定则获取最新
-            timeout: 单次API调用超时秒数，默认15秒
 
         Returns:
             (年报数据字典, 公司名称) 或 (None, None)
         """
-        import threading
         from datetime import datetime
-
-        class TimeoutError(Exception):
-            pass
-
-        def run_with_timeout(result_holder, fn, *args, **kwargs):
-            """在子线程中运行耗时操作，结果存入 result_holder[0]"""
-            try:
-                result_holder[0] = fn(*args, **kwargs)
-            except Exception as e:
-                result_holder[0] = e
-
         if year is None:
             year = datetime.now().year - 1
 
@@ -59,44 +45,26 @@ class AnnualReportDownloader:
         else:
             sec_code = f"{symbol}.SZ"
 
-        def fetch_with_timeout(fn, *args, **kwargs):
-            """跨平台超时包装：Windows/Mac/Linux 均可用"""
-            result_holder = [None]
-            t = threading.Thread(target=run_with_timeout, args=(result_holder, fn, *args), kwargs=kwargs)
-            t.start()
-            t.join(timeout=timeout)
-            if t.is_alive():
-                # 超时，result_holder[0] 仍是 None 或正在进行的异常
-                raise TimeoutError(f"调用 {fn.__name__} 超时（{timeout}s）")
-            if isinstance(result_holder[0], Exception):
-                raise result_holder[0]
-            return result_holder[0]
-
         try:
-            # 获取财务指标（可能较慢，加超时）
-            indicator_df = fetch_with_timeout(ak.stock_financial_analysis_indicator_em, symbol=sec_code)
+            # 获取财务指标
+            indicator_df = ak.stock_financial_analysis_indicator_em(symbol=sec_code)
 
             # 获取利润表
-            profit_df = fetch_with_timeout(ak.stock_profit_sheet_by_report_em, symbol=sec_code)
+            profit_df = ak.stock_profit_sheet_by_report_em(symbol=sec_code)
 
             # 获取资产负债表
-            balance_df = fetch_with_timeout(ak.stock_balance_sheet_by_report_em, symbol=sec_code)
+            balance_df = ak.stock_balance_sheet_by_report_em(symbol=sec_code)
 
             # 获取现金流量表
-            cashflow_df = fetch_with_timeout(ak.stock_cash_flow_sheet_by_report_em, symbol=sec_code)
+            cashflow_df = ak.stock_cash_flow_sheet_by_report_em(symbol=sec_code)
 
             # 获取公司名称
             name = None
-            if indicator_df is not None and not indicator_df.empty:
-                if 'SECURITY_NAME_ABBR' in indicator_df.columns:
-                    name = indicator_df['SECURITY_NAME_ABBR'].iloc[0]
+            if not indicator_df.empty:
+                name = indicator_df['SECURITY_NAME_ABBR'].iloc[0]
 
-            # 获取附注信息（供应商/客户/上下游相关）- 非关键，失败也继续
-            try:
-                notes_df = self._get_financial_notes(ak, sec_code, symbol)
-            except Exception as e:
-                logger.warning(f"附注信息获取失败（不影响主分析）: {e}")
-                notes_df = {}
+            # 获取附注信息（供应商/客户/上下游相关）
+            notes_df = self._get_financial_notes(ak, sec_code, symbol)
 
             result = {
                 'symbol': symbol,
@@ -112,9 +80,6 @@ class AnnualReportDownloader:
             logger.info(f"年报数据获取成功: {symbol} {year}年")
             return result, name
 
-        except TimeoutError:
-            logger.warning(f"年报数据获取超时: {symbol} {year}年")
-            return None, None
         except Exception as e:
             logger.warning(f"年报数据获取失败: {symbol} {year}年 - {e}")
             return None, None

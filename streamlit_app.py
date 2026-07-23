@@ -7,7 +7,9 @@ import streamlit as st
 import sys
 import os
 import pandas as pd
+import threading
 from pathlib import Path
+import time
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -124,42 +126,38 @@ def init_collectors():
     }
 
 def get_cached_analysis(symbol: str):
-    """获取分析结果（使用SQLite共享缓存，异常安全）"""
-    try:
-        shared_cache = get_shared_cache_stats()
-        cached_data = shared_cache.get_cached_data(symbol)
-        if cached_data is not None:
-            shared_cache.record_hit(symbol)
-            return cached_data
-        shared_cache.record_miss()
-    except Exception:
-        pass  # SQLite初始化失败不影响主流程
+    """获取分析结果（使用SQLite共享缓存）"""
+    shared_cache = get_shared_cache_stats()
+
+    # 先检查共享缓存中是否有数据
+    cached_data = shared_cache.get_cached_data(symbol)
+    if cached_data is not None:
+        shared_cache.record_hit(symbol)
+        # 命中时也更新 analysis_count（累计分析次数）
+        shared_cache.set_cached_data(symbol, cached_data)
+        # 返回缓存的dict数据（注意：返回的是字典而非dataclass对象）
+        return cached_data
+
+    shared_cache.record_miss()
 
     # 没有缓存，需要重新计算
-    try:
-        collectors = init_collectors()
-        data = collectors['data_collector'].collect_stock_data(symbol)
-        if not data or not data.get('info'):
-            return None
-        risk_metrics = collectors['risk_analyzer'].calculate_metrics(data)
-        joint_metrics = collectors['joint_risk_analyzer'].analyze(data)
-
-        result = {
-            'symbol': symbol,
-            'info': data.get('info', {}),
-            'risk_metrics': risk_metrics.to_dict() if hasattr(risk_metrics, 'to_dict') else risk_metrics,
-            'joint_metrics': joint_metrics.to_dict() if hasattr(joint_metrics, 'to_dict') else joint_metrics,
-        }
-
-        try:
-            shared_cache = get_shared_cache_stats()
-            shared_cache.set_cached_data(symbol, result)
-        except Exception:
-            pass
-
-        return result
-    except Exception:
+    collectors = init_collectors()
+    data = collectors['data_collector'].collect_stock_data(symbol)
+    if not data or not data.get('info'):
         return None
+    risk_metrics = collectors['risk_analyzer'].calculate_metrics(data)
+    joint_metrics = collectors['joint_risk_analyzer'].analyze(data)
+
+    result = {
+        'symbol': symbol,
+        'info': data.get('info', {}),
+        'risk_metrics': risk_metrics.to_dict() if hasattr(risk_metrics, 'to_dict') else risk_metrics,
+        'joint_metrics': joint_metrics.to_dict() if hasattr(joint_metrics, 'to_dict') else joint_metrics,
+    }
+
+    # 存入共享缓存
+    shared_cache.set_cached_data(symbol, result)
+    return result
 
 MINIMAX_API_KEY = "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
 
@@ -235,28 +233,107 @@ def display_interpretation(text, label="解读"):
         st.markdown(f"<div class='interpretation'><strong>{label}:</strong> {text}</div>", unsafe_allow_html=True)
 
 def show_loading_animation(data_loader=None, data_args=None):
-    """加载动画（Streamlit Cloud兼容版 - 不使用threading避免进程崩溃）"""
-    if data_loader is None:
-        return None
-
+    """光圈 + spinner 双动画 + 专业语句循环"""
     phases = [
-        "正在检索数据源", "正在连接数据接口", "正在清洗与校验",
-        "正在解析返回数据", "正在构建模型参数", "正在初始化模型",
-        "正在交叉验证推演", "正在计算特征值", "正在整合多维指标",
-        "正在生成风险因子", "正在生成风险洞察", "正在整理分析结果",
-        "正在深度校验", "正在多重比对", "正在优化权重配置",
-        "正在生成风险矩阵", "正在传回计算结果", "正在整合结果",
+        "正在检索数据源",
+        "正在连接数据接口",
+        "正在清洗与校验",
+        "正在解析返回数据",
+        "正在构建模型参数",
+        "正在初始化模型",
+        "正在交叉验证推演",
+        "正在计算特征值",
+        "正在整合多维指标",
+        "正在生成风险因子",
+        "正在生成风险洞察",
+        "正在整理分析结果",
+        "正在深度校验",
+        "正在多重比对",
+        "正在优化权重配置",
+        "正在生成风险矩阵",
+        "正在传回计算结果",
+        "正在整合结果",
         "正在完成最终报告",
     ]
 
-    placeholder = st.empty()
-    with st.spinner(phases[0]):
+    if data_loader is None:
+        return
+
+    result = [None]
+    error = [None]
+
+    def load():
         try:
-            result = data_loader(*data_args) if data_args else data_loader()
-            return result
+            result[0] = data_loader(*data_args) if data_args else data_loader()
         except Exception as e:
-            st.error(f"加载失败: {e}")
-            return None
+            error[0] = e
+
+    t = threading.Thread(target=load)
+    t.start()
+
+    status_ph = st.empty()
+    spinner_ph = st.empty()
+
+    spinner_html = """
+    <style>
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .loading-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+    .spinner-ring {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #e8e8e8;
+        border-top: 4px solid #667eea;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    .spinner-inner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid #e8e8e8;
+        border-bottom: 3px solid #764ba2;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite reverse;
+        margin-top: -46px;
+    }
+    </style>
+    <div class="loading-container">
+        <div class="spinner-ring"></div>
+        <div class="spinner-inner"></div>
+    </div>
+    """
+
+    idx = 0
+    while t.is_alive():
+        phase = phases[idx % len(phases)]
+        dots = "." * ((idx % 3) + 1)
+        spinner_ph.markdown(spinner_html, unsafe_allow_html=True)
+        status_ph.markdown(
+            f"<p style='text-align:center; color:#667eea; font-weight:600; font-size:15px; margin-top:5px;'>{phase}{dots}</p>",
+            unsafe_allow_html=True
+        )
+        time.sleep(1.0)
+        idx += 1
+
+    t.join()
+    spinner_ph.empty()
+    status_ph.empty()
+
+    if error[0]:
+        raise error[0]
+    return result[0]
 
 def mscore_warning_expander():
     """返回M-Score警告的展开式提示（兼容Streamlit）"""
@@ -410,22 +487,17 @@ Piotroski F-Score从三大维度9个指标评分：
     return report
 
 def display_cache_stats():
-    """显示缓存统计（从SQLite共享数据库读取，异常安全）"""
-    try:
-        shared_cache = get_shared_cache_stats()
-        stats = shared_cache.get_stats()
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("累计分析", stats.get('cached_symbols', 0), "只")
-        with col2:
-            st.metric("缓存命中", stats.get('total_hits', 0))
-        with col3:
-            st.metric("缓存未命中", stats.get('total_misses', 0))
-    except Exception:
-        col1, col2, col3 = st.columns(3)
-        with col1: st.metric("累计分析", "—")
-        with col2: st.metric("缓存命中", "—")
-        with col3: st.metric("缓存未命中", "—")
+    """显示缓存统计（从SQLite共享数据库读取）"""
+    shared_cache = get_shared_cache_stats()
+    stats = shared_cache.get_stats()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("累计分析", stats['cached_symbols'], "只")
+    with col2:
+        st.metric("缓存命中", stats['total_hits'])
+    with col3:
+        st.metric("缓存未命中", stats['total_misses'])
 
 # 主应用
 def main():
@@ -454,20 +526,6 @@ def main():
         with col2: st.metric("分析维度", "20+", "财务/风险/市场")
         with col3: st.metric("智能体数量", "4", "协作分析")
         with col4: st.metric("PDF分析", "支持", "年报风险识别")
-
-        # ========== 网络状态诊断 ==========
-        import requests as _req
-        try:
-            test_r = _req.get("https://hq.sinajs.cn/list=sh000001", timeout=5)
-            network_ok = test_r.status_code == 200
-        except Exception:
-            network_ok = False
-
-        if not network_ok:
-            st.warning("⚠️ **网络环境提示**：检测到无法访问中国大陆金融数据源（东方财富/新浪财经）。"
-                       "这通常是因为 Streamlit Cloud 服务器在海外，中国金融 API 被屏蔽。"
-                       "**本地部署可正常使用，云端部署需要配置代理或使用境外可访问的数据源。**")
-            st.divider()
 
         # ========== 全球市场行情 ==========
         st.markdown('<div class="section-title">🌏 全球市场行情</div>', unsafe_allow_html=True)
@@ -508,7 +566,7 @@ def main():
                 for d in global_stocks[:7]:
                     st.markdown(render_index_row(d), unsafe_allow_html=True)
         else:
-            st.warning("行情数据暂时不可用（网络环境限制）")
+            st.info("行情数据暂时不可用（网络环境限制）")
 
         st.divider()
 
@@ -1116,11 +1174,7 @@ def main():
 
                         from src.pdf.annual_report_downloader import AnnualReportDownloader
                         downloader = AnnualReportDownloader()
-                        try:
-                            annual_data, company_name = downloader.download_latest_annual_report(symbol_input, year_input)
-                        except Exception as e:
-                            annual_data = None
-                            company_name = None
+                        annual_data, company_name = downloader.download_latest_annual_report(symbol_input, year_input)
 
                         if annual_data:
                             try:
@@ -1227,10 +1281,7 @@ def main():
 
             display_cache_stats()
 
-            try:
-                ranking = get_shared_cache_stats().get_ranking(limit=30)
-            except Exception:
-                ranking = []
+            ranking = get_shared_cache_stats().get_ranking(limit=30)
 
             if ranking:
                 # 转换为DataFrame便于可视化
