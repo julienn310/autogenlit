@@ -13,17 +13,52 @@ import time
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.data.astock_collector import AStockDataCollector
-from src.data.market_collector import fetch_major_indices
-from src.data.news_collector import fetch_news
-from src.data.announcement_collector import fetch_announcements, _classify_intent, _fetch_ann_content
-from src.analysis.financial_analyzer import FinancialAnalyzer
-from src.risk.risk_analyzer import RiskAnalyzer
-from src.risk.joint_risk_analyzer import JointRiskAnalyzer
-from src.optimization.portfolio_optimizer import PortfolioOptimizer
-from src.agents.pdf_risk_agent import PDFRiskAgent
-from src.agents.announcement_agent import AnnouncementAgent
-from src.cache.shared_cache_stats import get_shared_cache_stats
+# 懒加载导入（解决 Streamlit Cloud 并发竞态导致的 KeyError）
+_import_lock = threading.Lock()
+_lazy_imports = {}
+
+def _lazy_import(name, module, import_names):
+    """线程安全的懒加载导入"""
+    with _import_lock:
+        if module not in _lazy_imports:
+            mod = __import__(module, fromlist=import_names)
+            _lazy_imports[module] = {n: getattr(mod, n) for n in import_names}
+    return [_lazy_imports[module][n] for n in import_names]
+
+def _get_AStockDataCollector():
+    return _lazy_import('AStockDataCollector', 'src.data.astock_collector', ['AStockDataCollector'])[0]
+
+def _get_FinancialAnalyzer():
+    return _lazy_import('FinancialAnalyzer', 'src.analysis.financial_analyzer', ['FinancialAnalyzer'])[0]
+
+def _get_RiskAnalyzer():
+    return _lazy_import('RiskAnalyzer', 'src.risk.risk_analyzer', ['RiskAnalyzer'])[0]
+
+def _get_JointRiskAnalyzer():
+    return _lazy_import('JointRiskAnalyzer', 'src.risk.joint_risk_analyzer', ['JointRiskAnalyzer'])[0]
+
+def _get_PortfolioOptimizer():
+    return _lazy_import('PortfolioOptimizer', 'src.optimization.portfolio_optimizer', ['PortfolioOptimizer'])[0]
+
+def _get_PDFRiskAgent():
+    return _lazy_import('PDFRiskAgent', 'src.agents.pdf_risk_agent', ['PDFRiskAgent'])[0]
+
+def _get_AnnouncementAgent():
+    return _lazy_import('AnnouncementAgent', 'src.agents.announcement_agent', ['AnnouncementAgent'])[0]
+
+def _get_shared_cache_stats():
+    return _lazy_import('get_shared_cache_stats', 'src.cache.shared_cache_stats', ['get_shared_cache_stats'])[0]
+
+def _get_fetch_major_indices():
+    return _lazy_import('fetch_major_indices', 'src.data.market_collector', ['fetch_major_indices'])[0]
+
+def _get_fetch_news():
+    return _lazy_import('fetch_news', 'src.data.news_collector', ['fetch_news'])[0]
+
+def _get_fetch_announcements():
+    return _lazy_import('fetch_announcements', 'src.data.announcement_collector', ['fetch_announcements', '_classify_intent', '_fetch_ann_content'])[0]
+
+# 页面配置
 
 # 页面配置
 st.set_page_config(
@@ -118,16 +153,16 @@ st.markdown("""
 @st.cache_resource
 def init_collectors():
     return {
-        'data_collector': AStockDataCollector(),
-        'financial_analyzer': FinancialAnalyzer(),
-        'risk_analyzer': RiskAnalyzer(),
-        'joint_risk_analyzer': JointRiskAnalyzer(),
-        'portfolio_optimizer': PortfolioOptimizer(),
+        'data_collector': _get_AStockDataCollector()(),
+        'financial_analyzer': _get_FinancialAnalyzer()(),
+        'risk_analyzer': _get_RiskAnalyzer()(),
+        'joint_risk_analyzer': _get_JointRiskAnalyzer()(),
+        'portfolio_optimizer': _get_PortfolioOptimizer()(),
     }
 
 def get_cached_analysis(symbol: str):
     """获取分析结果（使用SQLite共享缓存）"""
-    shared_cache = get_shared_cache_stats()
+    shared_cache = _get_shared_cache_stats()()
 
     # 先检查共享缓存中是否有数据
     cached_data = shared_cache.get_cached_data(symbol)
@@ -488,7 +523,7 @@ Piotroski F-Score从三大维度9个指标评分：
 
 def display_cache_stats():
     """显示缓存统计（从SQLite共享数据库读取）"""
-    shared_cache = get_shared_cache_stats()
+    shared_cache = _get_shared_cache_stats()()
     stats = shared_cache.get_stats()
 
     col1, col2, col3 = st.columns(3)
@@ -532,7 +567,7 @@ def main():
 
         with st.spinner("🌐 正在加载全球指数，请稍候..."):
             try:
-                indices = fetch_major_indices()
+                indices = _get_fetch_major_indices()()
             except Exception:
                 indices = []
 
@@ -575,7 +610,7 @@ def main():
 
         with st.spinner("📡 正在抓取新闻与舆情，请稍候..."):
             try:
-                news_data = fetch_news()
+                news_data = _get_fetch_news()()
             except Exception:
                 news_data = {'timeline': [], 'kol': [], 'weibo_sentiment': [], 'xueqiu_hot': [], 'flash': []}
 
@@ -1178,7 +1213,7 @@ def main():
 
                         if annual_data:
                             try:
-                                pdf_agent = PDFRiskAgent(get_api_key())
+                                pdf_agent = _get_PDFRiskAgent()(get_api_key())
                                 pdf_analysis = pdf_agent.analyze_financial_data(
                                     annual_data,
                                     company_name or info.get('name', '')
@@ -1194,7 +1229,7 @@ def main():
                                 pdf_path = tmp_file.name
                             try:
                                 processor = PDFProcessor()
-                                pdf_agent = PDFRiskAgent(get_api_key())
+                                pdf_agent = _get_PDFRiskAgent()(get_api_key())
                                 text = processor.extract_text(pdf_path, max_pages=100)
                                 financial_text = processor.extract_financial_notes(text)
                                 if not financial_text:
@@ -1281,7 +1316,7 @@ def main():
 
             display_cache_stats()
 
-            ranking = get_shared_cache_stats().get_ranking(limit=30)
+            ranking = _get_shared_cache_stats()().get_ranking(limit=30)
 
             if ranking:
                 # 转换为DataFrame便于可视化
@@ -1371,7 +1406,7 @@ def main():
             ann_symbol = ann_symbol.strip()
             st.session_state['ann_symbol'] = ann_symbol
             with st.spinner("正在抓取公告..."):
-                anns = fetch_announcements(ann_symbol, days=ann_days)
+                anns = _get_fetch_announcements()(ann_symbol, days=ann_days)
                 st.session_state['ann_anns'] = anns
                 st.session_state['ann_analysis'] = None
                 st.session_state['ann_selected'] = None
@@ -1390,7 +1425,7 @@ def main():
             # ===== 综合AI解读 =====
             if st.button("🧠 AI综合解读全部公告", type="primary"):
                 with st.spinner("正在深度分析..."):
-                    agent = AnnouncementAgent(get_api_key())
+                    agent = _get_AnnouncementAgent()(get_api_key())
                     st.session_state['ann_analysis'] = agent.analyze(
                         st.session_state['ann_symbol'], days=ann_days
                     )
@@ -1442,7 +1477,7 @@ def main():
                     with col_ai:
                         if st.button("🤖 深度解读", key=f"ai_{i}"):
                             with st.spinner("正在解读..."):
-                                agent = AnnouncementAgent(get_api_key())
+                                agent = _get_AnnouncementAgent()(get_api_key())
                                 result = agent.analyze_single(ann, company_name="")
                             st.session_state['ann_selected_result'] = result
                             st.session_state['ann_selected'] = ann_key
