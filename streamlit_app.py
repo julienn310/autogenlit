@@ -676,7 +676,7 @@ def main():
             symbol = st.text_input("输入股票代码", placeholder="例如: 000001", label_visibility="collapsed")
         with col2:
             st.write("")
-            analyze_btn = st.button("查询", type="primary", use_container_width=True)
+            analyze_btn = st.button("查询", type="primary", width='stretch')
 
         if analyze_btn and symbol:
             collectors = init_collectors()
@@ -1320,7 +1320,7 @@ def main():
                 st.markdown("#### 完整榜单")
                 display_df = df_ranking[['排名', 'symbol', '股票名称', '分析次数']].copy()
                 display_df.columns = ['排名', '代码', '股票名称', '分析次数']
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.dataframe(display_df, width='stretch', hide_index=True)
             else:
                 st.info("暂无分析记录，请先在「综合年报分析」中分析股票")
 
@@ -1355,9 +1355,9 @@ def main():
 
         col_fetch, col_clear = st.columns([1, 1])
         with col_fetch:
-            fetchClicked = st.button("🔍 抓取公告", type="primary", use_container_width=True)
+            fetchClicked = st.button("🔍 抓取公告", type="primary", width='stretch')
         with col_clear:
-            if st.button("🗑 清空", use_container_width=True):
+            if st.button("🗑 清空", width='stretch'):
                 st.session_state['ann_anns'] = None
                 st.session_state['ann_symbol'] = ""
                 st.session_state['ann_analysis'] = None
@@ -1429,7 +1429,7 @@ def main():
                     else:
                         col_btn, col_status = st.columns([1, 3])
                         with col_btn:
-                            if st.button("📖 获取内容", key=f"fetch_{i}", use_container_width=True):
+                            if st.button("📖 获取内容", key=f"fetch_{i}", width='stretch'):
                                 with st.spinner("正在获取内容..."):
                                     content = _fetch_ann_content(ann)
                                     st.session_state[ann_content_key] = content
