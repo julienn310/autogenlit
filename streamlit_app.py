@@ -1174,7 +1174,11 @@ def main():
 
                         from src.pdf.annual_report_downloader import AnnualReportDownloader
                         downloader = AnnualReportDownloader()
-                        annual_data, company_name = downloader.download_latest_annual_report(symbol_input, year_input)
+                        try:
+                            annual_data, company_name = downloader.download_latest_annual_report(symbol_input, year_input)
+                        except Exception as e:
+                            annual_data = None
+                            company_name = None
 
                         if annual_data:
                             try:
