@@ -1162,12 +1162,11 @@ def main():
                     import threading
 
                     def load_comprehensive():
-                        import time
-                        _start = time.time()
-                        _max = 55  # 全局时间预算（秒），确保云端不超时
+                        _budget_start = time.time()
+                        _budget_max = 55  # 全局时间预算（秒），确保云端不超时
 
                         def _check():
-                            if time.time() - _start > _max:
+                            if time.time() - _budget_start > _budget_max:
                                 raise TimeoutError("综合年报分析超时，已跳过年报补充分析")
 
                         # 获取缓存分析
