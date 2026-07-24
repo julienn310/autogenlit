@@ -152,8 +152,8 @@ class SharedCacheStats:
             pass
 
     def get_stats(self) -> dict:
-        col = self.col
         self._ensure_base_initialized()
+        col = self.col
         if col is None:
             with _lock:
                 total_analysis = sum(v["analysis_count"] for v in _memory_cache.values())
@@ -254,8 +254,8 @@ class SharedCacheStats:
             pass
 
     def get_ranking(self, limit: int = 20) -> list:
-        col = self.col
         self._ensure_base_initialized()
+        col = self.col
         if col is None:
             with _lock:
                 sorted_symbols = sorted(
