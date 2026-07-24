@@ -37,14 +37,11 @@ BASE_HOT_STOCKS = {code: {"name": name, "count": count}
 def _get_mongo_collection():
     """懒加载 MongoDB collection"""
     if not MONGODB_AVAILABLE:
-        print("[_get_mongo] MONGODB_AVAILABLE=False，pymongo或streamlit未安装", flush=True)
         return None
     try:
         uri = st.secrets.get("MONGODB_URI", "")
         if not uri:
-            print("[_get_mongo] MONGODB_URI 未配置或为空", flush=True)
             return None
-        print(f"[_get_mongo] 正在连接 MongoDB Atlas（timeout=5s）...", flush=True)
         client = MongoClient(
             uri,
             appName="a_stock_research",
@@ -53,13 +50,8 @@ def _get_mongo_collection():
             socketTimeoutMS=8000,
         )
         client.admin.command("ping")
-        col = client.get_database("stock_cache")["cache_stats"]
-        print(f"[_get_mongo] 连接成功！collection={col}", flush=True)
-        return col
-    except Exception as e:
-        import traceback
-        print(f"[_get_mongo] 连接失败: {type(e).__name__}: {e}", flush=True)
-        print(f"[_get_mongo] 详细: {traceback.format_exc()}", flush=True)
+        return client.get_database("stock_cache")["cache_stats"]
+    except Exception:
         return None
 
 
@@ -68,10 +60,9 @@ def _init_base_hotness(col):
     if col is None:
         return False
     try:
-        from pymongo import ReplaceOne, UpdateOne
+        from pymongo import ReplaceOne
         ops = []
         for symbol, info in BASE_HOT_STOCKS.items():
-            # replace_one 保证幂等：每次都强制覆写为正确值
             ops.append(
                 ReplaceOne(
                     {"_id": f"symbol:{symbol}"},
@@ -86,14 +77,10 @@ def _init_base_hotness(col):
                     upsert=True,
                 )
             )
-        result = col.bulk_write(ops, ordered=False)
-        # 验证：确认有 8 条记录
+        col.bulk_write(ops, ordered=False)
         count = col.count_documents({"_id": {"$regex": "^symbol:"}})
-        print(f"[_init_base_hotness] bulk_write完成，写入{len(BASE_HOT_STOCKS)}条，验证count={count}", flush=True)
         return count >= len(BASE_HOT_STOCKS)
-    except Exception as e:
-        import sys
-        print(f"[_init_base_hotness] 写入失败: {e}", flush=True)
+    except Exception:
         return False
 
 
@@ -108,14 +95,10 @@ class SharedCacheStats:
     def col(self):
         if self._col is None:
             self._col = _get_mongo_collection()
-            # 首次成功连接时，尝试初始化基础热度（写入失败会重试）
             if self._col is not None and not self._base_initialized:
-                print("[col] 开始初始化基础热度...", flush=True)
                 ok = _init_base_hotness(self._col)
-                print(f"[col] _init_base_hotness => {ok}", flush=True)
                 if ok:
                     self._base_initialized = True
-                # 如果 ok=False，说明 MongoDB 不可用，下次访问会重试
         return self._col
 
     def record_hit(self, symbol: str) -> None:
@@ -148,7 +131,7 @@ class SharedCacheStats:
             pass
 
     def get_stats(self) -> dict:
-        # 强制触发 col 的懒加载初始化（get_ranking 之后才触发太晚了）
+        # 强制触发 col 的懒加载初始化
         _ = self.col
         if self.col is None:
             with _lock:
@@ -164,22 +147,19 @@ class SharedCacheStats:
                 hits = self.col.find_one({"_id": "total_hits"})
                 misses = self.col.find_one({"_id": "total_misses"})
                 cached_count = self.col.count_documents({"_id": {"$regex": "^symbol:"}})
-                # 聚合 all symbol docs 的 analysis_count
                 pipeline = [
                     {"$match": {"_id": {"$regex": "^symbol:"}}},
                     {"$group": {"_id": None, "total": {"$sum": "$analysis_count"}}},
                 ]
                 agg = list(self.col.aggregate(pipeline))
                 total_analysis = agg[0]["total"] if agg else 0
-                print(f"[get_stats] hits={hits}, misses={misses}, cached_count={cached_count}, total_analysis={total_analysis}", flush=True)
                 return {
                     "total_hits": hits["value"] if hits else 0,
                     "total_misses": misses["value"] if misses else 0,
                     "total_analysis": total_analysis,
                     "cached_symbols": cached_count,
                 }
-        except Exception as e:
-            print(f"[get_stats] 异常: {type(e).__name__}: {e}", flush=True)
+        except Exception:
             return {"total_hits": 0, "total_misses": 0, "total_analysis": 0, "cached_symbols": 0}
 
     def is_cached(self, symbol: str) -> bool:
@@ -255,13 +235,12 @@ class SharedCacheStats:
                 ]
         try:
             with _lock:
-                print(f"[get_ranking] col={type(self.col)}, querying MongoDB...", flush=True)
                 cursor = (
                     self.col.find({"_id": {"$regex": "^symbol:"}})
                     .sort("analysis_count", -1)
                     .limit(limit)
                 )
-                result = [
+                return [
                     {
                         "symbol": doc.get("symbol", ""),
                         "name": doc.get("name") or (
@@ -274,10 +253,7 @@ class SharedCacheStats:
                     }
                     for doc in cursor
                 ]
-                print(f"[get_ranking] => {len(result)} 条记录", flush=True)
-                return result
-        except Exception as e:
-            print(f"[get_ranking] 异常: {e}", flush=True)
+        except Exception:
             return []
 
 
@@ -288,6 +264,5 @@ def get_shared_cache_stats() -> SharedCacheStats:
     global _shared_stats
     if _shared_stats is None:
         _shared_stats = SharedCacheStats()
-        # 主动触发懒加载并初始化基础热度
         _ = _shared_stats.col
     return _shared_stats
