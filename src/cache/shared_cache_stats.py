@@ -32,57 +32,48 @@ _BASE_COUNTS[0] += diff
 BASE_HOT_STOCKS = {code: {"name": name, "count": count}
                    for code, name, count in zip(_BASE_CODES, _BASE_NAMES, _BASE_COUNTS)}
 
-# 全局单例 MongoClient，多个实例共享同一个连接池
+# 全局单例 MongoClient
 _mongo_client: Optional[MongoClient] = None
-_mongo_col = None
 
 
 def _get_mongo_client():
-    """获取全局单例 MongoClient（进程级共享连接池）"""
+    """获取全局单例 MongoClient"""
     global _mongo_client
     if not MONGODB_AVAILABLE:
         return None
-    if _mongo_client is None:
-        try:
-            uri = st.secrets.get("MONGODB_URI", "")
-            if not uri:
-                return None
-            _mongo_client = MongoClient(
-                uri,
-                appName="a_stock_research",
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
-                socketTimeoutMS=5000,
-                maxPoolSize=20,
-                minPoolSize=1,
-                maxIdleTimeMS=30000,
-            )
-        except Exception:
+    if _mongo_client is not None:
+        return _mongo_client
+    try:
+        uri = st.secrets.get("MONGODB_URI", "")
+        if not uri:
             return None
-    return _mongo_client
-
-
-def _get_mongo_collection():
-    """懒加载 MongoDB collection"""
-    global _mongo_col
-    if not MONGODB_AVAILABLE:
+        _mongo_client = MongoClient(
+            uri,
+            appName="a_stock_research",
+            serverSelectionTimeoutMS=3000,
+            connectTimeoutMS=3000,
+            socketTimeoutMS=3000,
+            maxPoolSize=10,
+            minPoolSize=0,
+        )
+        return _mongo_client
+    except Exception:
         return None
-    if _mongo_col is not None:
-        return _mongo_col
+
+
+def _get_col():
+    """获取 collection，不做 ping 检查"""
     client = _get_mongo_client()
     if client is None:
         return None
     try:
-        _mongo_col = client.get_database("stock_cache")["cache_stats"]
-        return _mongo_col
+        return client.get_database("stock_cache")["cache_stats"]
     except Exception:
         return None
 
 
 def _init_base_hotness(col):
-    """初始化基础热度数据，写入成功后才会标记已初始化"""
-    if col is None:
-        return False
+    """初始化基础热度数据"""
     try:
         from pymongo import ReplaceOne
         ops = [
@@ -107,7 +98,7 @@ def _init_base_hotness(col):
 
 
 class SharedCacheStats:
-    """共享缓存统计（MongoDB 主用，内存降级，懒加载）"""
+    """共享缓存统计（MongoDB 主用，内存降级）"""
 
     def __init__(self):
         self._col = None
@@ -116,11 +107,10 @@ class SharedCacheStats:
     @property
     def col(self):
         if self._col is None:
-            self._col = _get_mongo_collection()
+            self._col = _get_col()
         return self._col
 
     def _ensure_base_initialized(self):
-        """惰性初始化基础热度（在第一次写操作时触发）"""
         if self._base_initialized or self.col is None:
             return
         ok = _init_base_hotness(self.col)
@@ -137,12 +127,13 @@ class SharedCacheStats:
         try:
             with _lock:
                 self.col.update_one(
-                    {"_id": "total_hits"}, {"$inc": {"value": 1}}, upsert=True
+                    {"_id": "total_hits"}, {"$inc": {"value": 1}}, upsert=True, max_time_ms=2000
                 )
                 self.col.update_one(
                     {"_id": f"symbol:{symbol}"},
                     {"$inc": {"analysis_count": 1}, "$set": {"symbol": symbol}},
                     upsert=True,
+                    max_time_ms=2000,
                 )
         except Exception:
             pass
@@ -155,14 +146,15 @@ class SharedCacheStats:
         try:
             with _lock:
                 self.col.update_one(
-                    {"_id": "total_misses"}, {"$inc": {"value": 1}}, upsert=True
+                    {"_id": "total_misses"}, {"$inc": {"value": 1}}, upsert=True, max_time_ms=2000
                 )
         except Exception:
             pass
 
     def get_stats(self) -> dict:
+        col = self.col
         self._ensure_base_initialized()
-        if self.col is None:
+        if col is None:
             with _lock:
                 total_analysis = sum(v["analysis_count"] for v in _memory_cache.values())
                 return {
@@ -173,16 +165,16 @@ class SharedCacheStats:
                 }
         try:
             with _lock:
-                hits = self.col.find_one({"_id": "total_hits"}, max_time_ms=3000)
-                misses = self.col.find_one({"_id": "total_misses"}, max_time_ms=3000)
-                cached_count = self.col.count_documents(
+                hits = col.find_one({"_id": "total_hits"}, max_time_ms=3000)
+                misses = col.find_one({"_id": "total_misses"}, max_time_ms=3000)
+                cached_count = col.count_documents(
                     {"_id": {"$regex": "^symbol:"}}, max_time_ms=3000
                 )
                 pipeline = [
                     {"$match": {"_id": {"$regex": "^symbol:"}}},
                     {"$group": {"_id": None, "total": {"$sum": "$analysis_count"}}},
                 ]
-                agg = list(self.col.aggregate(pipeline, maxTimeMS=3000))
+                agg = list(col.aggregate(pipeline, maxTimeMS=3000))
                 total_analysis = agg[0]["total"] if agg else 0
                 return {
                     "total_hits": hits["value"] if hits else 0,
@@ -191,16 +183,24 @@ class SharedCacheStats:
                     "cached_symbols": cached_count,
                 }
         except Exception:
-            return {"total_hits": 0, "total_misses": 0, "total_analysis": 0, "cached_symbols": 0}
+            return {
+                "total_hits": 0,
+                "total_misses": 0,
+                "total_analysis": 0,
+                "cached_symbols": 0,
+            }
 
     def is_cached(self, symbol: str) -> bool:
         if self.col is None:
             return symbol in _memory_cache
         try:
             with _lock:
-                return self.col.find_one(
-                    {"_id": f"symbol:{symbol}"}, max_time_ms=3000
-                ) is not None
+                return (
+                    self.col.find_one(
+                        {"_id": f"symbol:{symbol}"}, max_time_ms=2000
+                    )
+                    is not None
+                )
         except Exception:
             return False
 
@@ -211,7 +211,7 @@ class SharedCacheStats:
         try:
             with _lock:
                 doc = self.col.find_one(
-                    {"_id": f"symbol:{symbol}"}, max_time_ms=3000
+                    {"_id": f"symbol:{symbol}"}, max_time_ms=2000
                 )
                 return doc.get("data") if doc else None
         except Exception:
@@ -242,20 +242,21 @@ class SharedCacheStats:
                         "$setOnInsert": {"analysis_count": 1},
                     },
                     upsert=True,
-                    max_time_ms=5000,
+                    max_time_ms=3000,
                 )
                 if self.is_cached(symbol):
                     self.col.update_one(
                         {"_id": f"symbol:{symbol}"},
                         {"$inc": {"analysis_count": 1}},
-                        max_time_ms=3000,
+                        max_time_ms=2000,
                     )
         except Exception:
             pass
 
     def get_ranking(self, limit: int = 20) -> list:
+        col = self.col
         self._ensure_base_initialized()
-        if self.col is None:
+        if col is None:
             with _lock:
                 sorted_symbols = sorted(
                     _memory_cache.items(),
@@ -275,7 +276,7 @@ class SharedCacheStats:
         try:
             with _lock:
                 cursor = (
-                    self.col.find({"_id": {"$regex": "^symbol:"}}, max_time_ms=5000)
+                    col.find({"_id": {"$regex": "^symbol:"}}, max_time_ms=5000)
                     .sort("analysis_count", -1)
                     .limit(limit)
                 )
