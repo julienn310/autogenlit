@@ -491,18 +491,26 @@ Piotroski F-Score从三大维度9个指标评分：
 
     return report
 
-def display_cache_stats():
-    """显示缓存统计（从SQLite共享数据库读取）"""
+def display_stock_ranking():
+    """显示个股热度榜单"""
     shared_cache = get_shared_cache_stats()
-    stats = shared_cache.get_stats()
+    ranking = shared_cache.get_ranking(limit=20)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns([3, 1])
     with col1:
-        st.metric("累计分析", stats['cached_symbols'], "只")
+        st.markdown("#### 🔥 个股热度榜")
     with col2:
-        st.metric("缓存命中", stats['total_hits'])
-    with col3:
-        st.metric("缓存未命中", stats['total_misses'])
+        total = shared_cache.get_stats()
+        st.caption(f"总分析次数: {total['total_hits'] + total['total_misses']}")
+
+    if ranking:
+        df = pd.DataFrame(ranking)
+        df.columns = ["股票代码", "股票名称", "分析次数", "最近分析"]
+        df.index = range(1, len(df) + 1)
+        df.index.name = "排名"
+        st.dataframe(df, use_container_width=True, hide_index=False, height=350)
+    else:
+        st.info("暂无热度数据")
 
 # 主应用
 def main():
@@ -1152,7 +1160,7 @@ def main():
             """, unsafe_allow_html=True)
 
             # 显示缓存统计
-            display_cache_stats()
+            display_stock_ranking()
 
             col1, col2 = st.columns([1, 3])
             with col1:
@@ -1284,7 +1292,7 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            display_cache_stats()
+            display_stock_ranking()
 
             ranking = get_shared_cache_stats().get_ranking(limit=30)
 
