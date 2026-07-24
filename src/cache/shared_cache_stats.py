@@ -149,9 +149,11 @@ class SharedCacheStats:
     def get_stats(self) -> dict:
         if self.col is None:
             with _lock:
+                total_analysis = sum(v["analysis_count"] for v in _memory_cache.values())
                 return {
                     "total_hits": _memory_stats.get("total_hits", 0),
                     "total_misses": _memory_stats.get("total_misses", 0),
+                    "total_analysis": total_analysis,
                     "cached_symbols": len(_memory_cache),
                 }
         try:
@@ -159,13 +161,21 @@ class SharedCacheStats:
                 hits = self.col.find_one({"_id": "total_hits"})
                 misses = self.col.find_one({"_id": "total_misses"})
                 cached_count = self.col.count_documents({"_id": {"$regex": "^symbol:"}})
+                # 聚合 all symbol docs 的 analysis_count
+                pipeline = [
+                    {"$match": {"_id": {"$regex": "^symbol:"}}},
+                    {"$group": {"_id": None, "total": {"$sum": "$analysis_count"}}},
+                ]
+                agg = list(self.col.aggregate(pipeline))
+                total_analysis = agg[0]["total"] if agg else 0
                 return {
                     "total_hits": hits["value"] if hits else 0,
                     "total_misses": misses["value"] if misses else 0,
+                    "total_analysis": total_analysis,
                     "cached_symbols": cached_count,
                 }
         except Exception:
-            return {"total_hits": 0, "total_misses": 0, "cached_symbols": 0}
+            return {"total_hits": 0, "total_misses": 0, "total_analysis": 0, "cached_symbols": 0}
 
     def is_cached(self, symbol: str) -> bool:
         if self.col is None:
