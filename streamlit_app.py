@@ -491,24 +491,48 @@ Piotroski F-Score从三大维度9个指标评分：
 
     return report
 
-def display_stock_ranking():
-    """显示个股热度榜单"""
+def display_cache_stats():
+    """显示缓存统计（从MongoDB共享数据库读取）"""
     shared_cache = get_shared_cache_stats()
+    stats = shared_cache.get_stats()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("累计分析", stats['cached_symbols'], "只")
+    with col2:
+        st.metric("缓存命中", stats['total_hits'])
+    with col3:
+        st.metric("缓存未命中", stats['total_misses'])
+
+
+def display_stock_ranking():
+    """显示个股热度榜单（带可视化图表）"""
+    shared_cache = get_shared_cache_stats()
+    stats = shared_cache.get_stats()
     ranking = shared_cache.get_ranking(limit=20)
 
-    col1, col2 = st.columns([3, 1])
+    # 标题行
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         st.markdown("#### 🔥 个股热度榜")
     with col2:
-        total = shared_cache.get_stats()
-        st.caption(f"总分析次数: {total['total_hits'] + total['total_misses']}")
+        total = stats['total_hits'] + stats['total_misses']
+        st.metric("总分析次数", total)
+    with col3:
+        st.metric("上榜股票", len(ranking))
 
     if ranking:
         df = pd.DataFrame(ranking)
         df.columns = ["股票代码", "股票名称", "分析次数", "最近分析"]
         df.index = range(1, len(df) + 1)
         df.index.name = "排名"
-        st.dataframe(df, use_container_width=True, hide_index=False, height=350)
+
+        # ---- 横向柱状图 ----
+        chart_df = df.head(10).set_index("股票名称")["分析次数"]
+        st.bar_chart(chart_df, horizontal=True, height=280)
+
+        # ---- 榜单表格 ----
+        st.dataframe(df, use_container_width=True, hide_index=False, height=300)
     else:
         st.info("暂无热度数据")
 
@@ -539,6 +563,11 @@ def main():
         with col2: st.metric("分析维度", "20+", "财务/风险/市场")
         with col3: st.metric("智能体数量", "4", "协作分析")
         with col4: st.metric("PDF分析", "支持", "年报风险识别")
+
+        # ========== 个股热度榜 ==========
+        st.divider()
+        display_stock_ranking()
+        st.divider()
 
         # ========== 全球市场行情 ==========
         st.markdown('<div class="section-title">🌏 全球市场行情</div>', unsafe_allow_html=True)
@@ -1160,7 +1189,7 @@ def main():
             """, unsafe_allow_html=True)
 
             # 显示缓存统计
-            display_stock_ranking()
+            display_cache_stats()
 
             col1, col2 = st.columns([1, 3])
             with col1:
@@ -1292,7 +1321,7 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            display_stock_ranking()
+            display_cache_stats()
 
             ranking = get_shared_cache_stats().get_ranking(limit=30)
 

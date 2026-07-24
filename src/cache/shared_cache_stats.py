@@ -25,7 +25,7 @@ _memory_cache = {}
 # 基础热度股票（共56次，随机分配）
 random.seed(42)  # 固定种子保证各实例初始化一致
 _BASE_CODES = ["688712", "603259", "002938", "600319", "300738", "301479", "301155", "688525"]
-_BASE_NAMES = ["斯瑞新材", "药明康德", "鹏鼎控股", "巨化股份", "奥飞数据", "舍得酒业", "海力风电", "佰仁医疗"]
+_BASE_NAMES = ["北芯生命", "药明康德", "鹏鼎控股", "亚星化学", "奥飞数据", "弘景光电", "海力风电", "佰维存储"]
 _BASE_COUNTS = [random.randint(3, 12) for _ in range(8)]
 # 确保总数=56
 diff = 56 - sum(_BASE_COUNTS)
@@ -247,4 +247,6 @@ def get_shared_cache_stats() -> SharedCacheStats:
     global _shared_stats
     if _shared_stats is None:
         _shared_stats = SharedCacheStats()
+        # 主动触发懒加载并初始化基础热度
+        _ = _shared_stats.col
     return _shared_stats
