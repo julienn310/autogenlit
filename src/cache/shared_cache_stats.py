@@ -45,11 +45,12 @@ def _get_mongo_collection():
         client = MongoClient(
             uri,
             appName="a_stock_research",
-            serverSelectionTimeoutMS=8000,
-            connectTimeoutMS=8000,
-            socketTimeoutMS=8000,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=5000,
+            maxPoolSize=10,
+            minPoolSize=0,
         )
-        client.admin.command("ping")
         return client.get_database("stock_cache")["cache_stats"]
     except Exception:
         return None
@@ -77,9 +78,8 @@ def _init_base_hotness(col):
                     upsert=True,
                 )
             )
-        col.bulk_write(ops, ordered=False)
-        count = col.count_documents({"_id": {"$regex": "^symbol:"}})
-        return count >= len(BASE_HOT_STOCKS)
+        col.bulk_write(ops, ordered=True)
+        return True
     except Exception:
         return False
 
@@ -95,11 +95,15 @@ class SharedCacheStats:
     def col(self):
         if self._col is None:
             self._col = _get_mongo_collection()
-            if self._col is not None and not self._base_initialized:
-                ok = _init_base_hotness(self._col)
-                if ok:
-                    self._base_initialized = True
         return self._col
+
+    def _ensure_base_initialized(self):
+        """惰性初始化基础热度（在第一次写操作时触发）"""
+        if self._base_initialized or self._col is None:
+            return
+        ok = _init_base_hotness(self._col)
+        if ok:
+            self._base_initialized = True
 
     def record_hit(self, symbol: str) -> None:
         if self.col is None:
@@ -131,7 +135,8 @@ class SharedCacheStats:
             pass
 
     def get_stats(self) -> dict:
-        # 强制触发 col 的懒加载初始化
+        # 惰性初始化基础热度
+        self._ensure_base_initialized()
         _ = self.col
         if self.col is None:
             with _lock:
@@ -217,6 +222,7 @@ class SharedCacheStats:
             pass
 
     def get_ranking(self, limit: int = 20) -> list:
+        self._ensure_base_initialized()
         if self.col is None:
             with _lock:
                 sorted_symbols = sorted(
