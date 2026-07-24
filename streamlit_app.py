@@ -532,7 +532,7 @@ def display_stock_ranking():
         st.bar_chart(chart_df, horizontal=True, height=280)
 
         # ---- 榜单表格 ----
-        st.dataframe(df, use_container_width=True, hide_index=False, height=300)
+        st.dataframe(df, width='stretch', hide_index=False, height=300)
     else:
         st.info("暂无热度数据")
 
