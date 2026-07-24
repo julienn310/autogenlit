@@ -99,9 +99,12 @@ class SharedCacheStats:
     def col(self):
         if self._col is None:
             self._col = _get_mongo_collection()
+            print(f"[col] _get_mongo_collection => {type(self._col)}", flush=True)
             # 首次成功连接时，尝试初始化基础热度（写入失败会重试）
             if self._col is not None and not self._base_initialized:
+                print("[col] 开始初始化基础热度...", flush=True)
                 ok = _init_base_hotness(self._col)
+                print(f"[col] _init_base_hotness => {ok}", flush=True)
                 if ok:
                     self._base_initialized = True
                 # 如果 ok=False，说明 MongoDB 不可用，下次访问会重试
@@ -230,12 +233,13 @@ class SharedCacheStats:
                 ]
         try:
             with _lock:
+                print(f"[get_ranking] col={type(self.col)}, querying MongoDB...", flush=True)
                 cursor = (
                     self.col.find({"_id": {"$regex": "^symbol:"}})
                     .sort("analysis_count", -1)
                     .limit(limit)
                 )
-                return [
+                result = [
                     {
                         "symbol": doc.get("symbol", ""),
                         "name": doc.get("name") or (
@@ -248,7 +252,10 @@ class SharedCacheStats:
                     }
                     for doc in cursor
                 ]
-        except Exception:
+                print(f"[get_ranking] => {len(result)} 条记录", flush=True)
+                return result
+        except Exception as e:
+            print(f"[get_ranking] 异常: {e}", flush=True)
             return []
 
 
