@@ -37,21 +37,29 @@ BASE_HOT_STOCKS = {code: {"name": name, "count": count}
 def _get_mongo_collection():
     """懒加载 MongoDB collection"""
     if not MONGODB_AVAILABLE:
+        print("[_get_mongo] MONGODB_AVAILABLE=False，pymongo或streamlit未安装", flush=True)
         return None
     try:
         uri = st.secrets.get("MONGODB_URI", "")
         if not uri:
+            print("[_get_mongo] MONGODB_URI 未配置或为空", flush=True)
             return None
+        print(f"[_get_mongo] 正在连接 MongoDB Atlas（timeout=5s）...", flush=True)
         client = MongoClient(
             uri,
             appName="a_stock_research",
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
-            socketTimeoutMS=5000,
+            serverSelectionTimeoutMS=8000,
+            connectTimeoutMS=8000,
+            socketTimeoutMS=8000,
         )
         client.admin.command("ping")
-        return client.get_database("stock_cache")["cache_stats"]
-    except Exception:
+        col = client.get_database("stock_cache")["cache_stats"]
+        print(f"[_get_mongo] 连接成功！collection={col}", flush=True)
+        return col
+    except Exception as e:
+        import traceback
+        print(f"[_get_mongo] 连接失败: {type(e).__name__}: {e}", flush=True)
+        print(f"[_get_mongo] 详细: {traceback.format_exc()}", flush=True)
         return None
 
 
@@ -99,7 +107,6 @@ class SharedCacheStats:
     def col(self):
         if self._col is None:
             self._col = _get_mongo_collection()
-            print(f"[col] _get_mongo_collection => {type(self._col)}", flush=True)
             # 首次成功连接时，尝试初始化基础热度（写入失败会重试）
             if self._col is not None and not self._base_initialized:
                 print("[col] 开始初始化基础热度...", flush=True)
