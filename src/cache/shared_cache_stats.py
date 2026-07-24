@@ -56,26 +56,36 @@ def _get_mongo_collection():
 
 
 def _init_base_hotness(col):
-    """初始化基础热度数据（如果 MongoDB 可用）"""
+    """初始化基础热度数据，写入成功后才会标记已初始化"""
     if col is None:
-        return
+        return False
     try:
+        from pymongo import ReplaceOne, UpdateOne
+        ops = []
         for symbol, info in BASE_HOT_STOCKS.items():
-            col.update_one(
-                {"_id": f"symbol:{symbol}"},
-                {
-                    "$setOnInsert": {
+            # replace_one 保证幂等：每次都强制覆写为正确值
+            ops.append(
+                ReplaceOne(
+                    {"_id": f"symbol:{symbol}"},
+                    {
+                        "_id": f"symbol:{symbol}",
                         "symbol": symbol,
                         "name": info["name"],
                         "data": {"info": {"name": info["name"]}},
                         "cached_at": time.time(),
+                        "analysis_count": info["count"],
                     },
-                    "$set": {"analysis_count": info["count"]},
-                },
-                upsert=True,
+                    upsert=True,
+                )
             )
-    except Exception:
-        pass
+        result = col.bulk_write(ops, ordered=False)
+        # 验证：确认有 8 条记录
+        count = col.count_documents({"_id": {"$regex": "^symbol:"}})
+        return count >= len(BASE_HOT_STOCKS)
+    except Exception as e:
+        import sys
+        print(f"[_init_base_hotness] 写入失败: {e}", flush=True)
+        return False
 
 
 class SharedCacheStats:
@@ -89,10 +99,15 @@ class SharedCacheStats:
     def col(self):
         if self._col is None:
             self._col = _get_mongo_collection()
-            # 首次成功连接时，初始化基础热度
+            print(f"[col] _get_mongo_collection => {type(self._col)}", flush=True)
+            # 首次成功连接时，尝试初始化基础热度（写入失败会重试）
             if self._col is not None and not self._base_initialized:
-                _init_base_hotness(self._col)
-                self._base_initialized = True
+                print("[col] 开始初始化基础热度...", flush=True)
+                ok = _init_base_hotness(self._col)
+                print(f"[col] _init_base_hotness => {ok}", flush=True)
+                if ok:
+                    self._base_initialized = True
+                # 如果 ok=False，说明 MongoDB 不可用，下次访问会重试
         return self._col
 
     def record_hit(self, symbol: str) -> None:
@@ -218,12 +233,13 @@ class SharedCacheStats:
                 ]
         try:
             with _lock:
+                print(f"[get_ranking] col={type(self.col)}, querying MongoDB...", flush=True)
                 cursor = (
                     self.col.find({"_id": {"$regex": "^symbol:"}})
                     .sort("analysis_count", -1)
                     .limit(limit)
                 )
-                return [
+                result = [
                     {
                         "symbol": doc.get("symbol", ""),
                         "name": doc.get("name") or (
@@ -236,7 +252,10 @@ class SharedCacheStats:
                     }
                     for doc in cursor
                 ]
-        except Exception:
+                print(f"[get_ranking] => {len(result)} 条记录", flush=True)
+                return result
+        except Exception as e:
+            print(f"[get_ranking] 异常: {e}", flush=True)
             return []
 
 
