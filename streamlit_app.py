@@ -514,9 +514,9 @@ def display_stock_ranking():
     # 标题行
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        st.markdown("#### 🔥 个股热度榜")
+        st.markdown("#### 🔥 站内个股热度")
     with col2:
-        total = stats['total_hits'] + stats['total_misses']
+        total = stats.get('total_analysis', stats['total_hits'] + stats['total_misses'])
         st.metric("总分析次数", total)
     with col3:
         st.metric("上榜股票", len(ranking))
