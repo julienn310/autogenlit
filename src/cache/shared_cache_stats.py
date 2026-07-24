@@ -3,6 +3,7 @@
 能连 MongoDB 就用，连不上自动降级到内存
 """
 
+import random
 import time
 import threading
 from typing import Optional
@@ -19,11 +20,22 @@ _lock = threading.Lock()
 
 # 内存降级存储
 _memory_stats = {"total_hits": 0, "total_misses": 0}
-_memory_cache = {}  # symbol -> {"data": ..., "cached_at": ..., "analysis_count": ...}
+_memory_cache = {}
+
+# 基础热度股票（共56次，随机分配）
+random.seed(42)  # 固定种子保证各实例初始化一致
+_BASE_CODES = ["688712", "603259", "002938", "600319", "300738", "301479", "301155", "688525"]
+_BASE_NAMES = ["斯瑞新材", "药明康德", "鹏鼎控股", "巨化股份", "奥飞数据", "舍得酒业", "海力风电", "佰仁医疗"]
+_BASE_COUNTS = [random.randint(3, 12) for _ in range(8)]
+# 确保总数=56
+diff = 56 - sum(_BASE_COUNTS)
+_BASE_COUNTS[0] += diff
+BASE_HOT_STOCKS = {code: {"name": name, "count": count}
+                   for code, name, count in zip(_BASE_CODES, _BASE_NAMES, _BASE_COUNTS)}
 
 
 def _get_mongo_collection():
-    """懒加载 MongoDB collection，失败返回 None"""
+    """懒加载 MongoDB collection"""
     if not MONGODB_AVAILABLE:
         return None
     try:
@@ -43,22 +55,45 @@ def _get_mongo_collection():
         return None
 
 
+def _init_base_hotness(col):
+    """初始化基础热度数据（如果 MongoDB 可用）"""
+    if col is None:
+        return
+    try:
+        for symbol, info in BASE_HOT_STOCKS.items():
+            col.update_one(
+                {"_id": f"symbol:{symbol}"},
+                {
+                    "$setOnInsert": {
+                        "symbol": symbol,
+                        "name": info["name"],
+                        "data": {"info": {"name": info["name"]}},
+                        "cached_at": time.time(),
+                    },
+                    "$set": {"analysis_count": info["count"]},
+                },
+                upsert=True,
+            )
+    except Exception:
+        pass
+
+
 class SharedCacheStats:
     """共享缓存统计（MongoDB 主用，内存降级，懒加载）"""
 
     def __init__(self):
-        self._col = None  # 懒加载，首次使用时才连接
+        self._col = None
+        self._base_initialized = False
 
     @property
     def col(self):
         if self._col is None:
             self._col = _get_mongo_collection()
+            # 首次成功连接时，初始化基础热度
+            if self._col is not None and not self._base_initialized:
+                _init_base_hotness(self._col)
+                self._base_initialized = True
         return self._col
-
-    @property
-    def use_memory(self):
-        """检查是否应该使用内存模式（MongoDB 不可用时）"""
-        return self._col is None and MONGODB_AVAILABLE
 
     def record_hit(self, symbol: str) -> None:
         if self.col is None:
@@ -156,7 +191,6 @@ class SharedCacheStats:
                     },
                     upsert=True,
                 )
-                # 如果是更新已有记录，额外 increment analysis_count
                 if self.is_cached(symbol):
                     self.col.update_one(
                         {"_id": f"symbol:{symbol}"},
@@ -192,7 +226,11 @@ class SharedCacheStats:
                 return [
                     {
                         "symbol": doc.get("symbol", ""),
-                        "name": doc.get("data", {}).get("info", {}).get("name", "") if isinstance(doc.get("data"), dict) else "",
+                        "name": doc.get("name") or (
+                            doc.get("data", {}).get("info", {}).get("name", "")
+                            if isinstance(doc.get("data"), dict)
+                            else ""
+                        ),
                         "count": doc.get("analysis_count", 0),
                         "cached_at": doc.get("cached_at", 0),
                     }
