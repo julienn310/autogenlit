@@ -505,17 +505,22 @@ def display_cache_stats():
         st.metric("缓存未命中", stats['total_misses'])
 
 
+@st.cache_data(ttl=15, show_spinner=False)
+def _get_stats_cached():
+    shared_cache = get_shared_cache_stats()
+    return shared_cache.get_stats()
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def _get_ranking_cached():
     shared_cache = get_shared_cache_stats()
-    stats = shared_cache.get_stats()
-    ranking = shared_cache.get_ranking(limit=20)
-    return stats, ranking
+    return shared_cache.get_ranking(limit=20)
 
 
 def display_stock_ranking():
     """显示个股热度榜单（带可视化图表）"""
-    stats, ranking = _get_ranking_cached()
+    stats = _get_stats_cached()
+    ranking = _get_ranking_cached()
 
     # 标题行
     col1, col2, col3 = st.columns([2, 1, 1])
