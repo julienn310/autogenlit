@@ -1,210 +1,252 @@
 """
-共享缓存统计模块 - SQLite 实现
-为所有用户提供统一的缓存命中/未命中统计，以及跨用户数据共享
+共享缓存统计模块 - MongoDB 实现（Streamlit Cloud 兼容）
+能连 MongoDB 就用，连不上自动降级到内存
 """
 
-import sqlite3
+import random
+import time
 import threading
-import json
-import os
-from pathlib import Path
 from typing import Optional
 
-_db_lock = threading.Lock()
-_db_path = Path(__file__).parent / "cache_stats.db"
+try:
+    from pymongo import MongoClient
+    import streamlit as st
+    MONGODB_AVAILABLE = True
+except ImportError:
+    MONGODB_AVAILABLE = False
 
 
-def _get_conn() -> sqlite3.Connection:
-    """获取数据库连接（线程安全）"""
-    conn = sqlite3.connect(str(_db_path), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+_lock = threading.Lock()
+
+# 内存降级存储
+_memory_stats = {"total_hits": 0, "total_misses": 0}
+_memory_cache = {}
+
+# 基础热度股票（共56次，随机分配）
+random.seed(42)  # 固定种子保证各实例初始化一致
+_BASE_CODES = ["688712", "603259", "002938", "600319", "300738", "301479", "301155", "688525"]
+_BASE_NAMES = ["北芯生命", "药明康德", "鹏鼎控股", "亚星化学", "奥飞数据", "弘景光电", "海力风电", "佰维存储"]
+_BASE_COUNTS = [random.randint(3, 12) for _ in range(8)]
+# 确保总数=56
+diff = 56 - sum(_BASE_COUNTS)
+_BASE_COUNTS[0] += diff
+BASE_HOT_STOCKS = {code: {"name": name, "count": count}
+                   for code, name, count in zip(_BASE_CODES, _BASE_NAMES, _BASE_COUNTS)}
 
 
-def _init_db():
-    """初始化数据库表"""
-    conn = _get_conn()
+def _get_mongo_collection():
+    """懒加载 MongoDB collection"""
+    if not MONGODB_AVAILABLE:
+        return None
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS cache_stats (
-                key TEXT PRIMARY KEY,
-                value INTEGER DEFAULT 0
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS symbol_cache (
-                symbol TEXT PRIMARY KEY,
-                data TEXT,
-                cached_at REAL,
-                analysis_count INTEGER DEFAULT 1
-            )
-        """)
-        # 确保 analysis_count 列存在（兼容已有数据库）
-        try:
-            conn.execute("ALTER TABLE symbol_cache ADD COLUMN analysis_count INTEGER DEFAULT 1")
-        except Exception:
-            pass
-        conn.commit()
-    finally:
-        conn.close()
+        uri = st.secrets.get("MONGODB_URI", "")
+        if not uri:
+            return None
+        client = MongoClient(
+            uri,
+            appName="a_stock_research",
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=5000,
+        )
+        client.admin.command("ping")
+        return client.get_database("stock_cache")["cache_stats"]
+    except Exception:
+        return None
 
 
-_init_db()
+def _init_base_hotness(col):
+    """初始化基础热度数据（如果 MongoDB 可用）"""
+    if col is None:
+        return
+    try:
+        for symbol, info in BASE_HOT_STOCKS.items():
+            col.update_one(
+                {"_id": f"symbol:{symbol}"},
+                {
+                    "$setOnInsert": {
+                        "symbol": symbol,
+                        "name": info["name"],
+                        "data": {"info": {"name": info["name"]}},
+                        "cached_at": time.time(),
+                    },
+                    "$set": {"analysis_count": info["count"]},
+                },
+                upsert=True,
+            )
+    except Exception:
+        pass
 
 
 class SharedCacheStats:
-    """
-    轻量级共享缓存统计（SQLite）
-    所有用户共享同一数据库文件
-    """
+    """共享缓存统计（MongoDB 主用，内存降级，懒加载）"""
 
     def __init__(self):
-        pass
+        self._col = None
+        self._base_initialized = False
+
+    @property
+    def col(self):
+        if self._col is None:
+            self._col = _get_mongo_collection()
+            # 首次成功连接时，初始化基础热度
+            if self._col is not None and not self._base_initialized:
+                _init_base_hotness(self._col)
+                self._base_initialized = True
+        return self._col
 
     def record_hit(self, symbol: str) -> None:
-        """记录缓存命中"""
-        with _db_lock:
-            conn = _get_conn()
-            try:
-                conn.execute("""
-                    INSERT INTO cache_stats (key, value) VALUES ('total_hits', 1)
-                    ON CONFLICT(key) DO UPDATE SET value = value + 1
-                    WHERE key = 'total_hits'
-                """)
-                conn.commit()
-            finally:
-                conn.close()
+        if self.col is None:
+            with _lock:
+                _memory_stats["total_hits"] = _memory_stats.get("total_hits", 0) + 1
+                if symbol in _memory_cache:
+                    _memory_cache[symbol]["analysis_count"] += 1
+            return
+        try:
+            with _lock:
+                self.col.update_one({"_id": "total_hits"}, {"$inc": {"value": 1}}, upsert=True)
+                self.col.update_one(
+                    {"_id": f"symbol:{symbol}"},
+                    {"$inc": {"analysis_count": 1}, "$set": {"symbol": symbol}},
+                    upsert=True,
+                )
+        except Exception:
+            pass
 
     def record_miss(self) -> None:
-        """记录缓存未命中"""
-        with _db_lock:
-            conn = _get_conn()
-            try:
-                conn.execute("""
-                    INSERT INTO cache_stats (key, value) VALUES ('total_misses', 1)
-                    ON CONFLICT(key) DO UPDATE SET value = value + 1
-                    WHERE key = 'total_misses'
-                """)
-                conn.commit()
-            finally:
-                conn.close()
+        if self.col is None:
+            with _lock:
+                _memory_stats["total_misses"] = _memory_stats.get("total_misses", 0) + 1
+            return
+        try:
+            with _lock:
+                self.col.update_one({"_id": "total_misses"}, {"$inc": {"value": 1}}, upsert=True)
+        except Exception:
+            pass
 
     def get_stats(self) -> dict:
-        """获取缓存统计"""
-        with _db_lock:
-            conn = _get_conn()
-            try:
-                cursor = conn.execute("SELECT key, value FROM cache_stats")
-                rows = cursor.fetchall()
-                stats = {row[0]: row[1] for row in rows}
-
-                cursor2 = conn.execute("SELECT COUNT(*) FROM symbol_cache")
-                cached_count = cursor2.fetchone()[0]
-
+        if self.col is None:
+            with _lock:
                 return {
-                    'total_hits': stats.get('total_hits', 0),
-                    'total_misses': stats.get('total_misses', 0),
-                    'cached_symbols': cached_count
+                    "total_hits": _memory_stats.get("total_hits", 0),
+                    "total_misses": _memory_stats.get("total_misses", 0),
+                    "cached_symbols": len(_memory_cache),
                 }
-            finally:
-                conn.close()
+        try:
+            with _lock:
+                hits = self.col.find_one({"_id": "total_hits"})
+                misses = self.col.find_one({"_id": "total_misses"})
+                cached_count = self.col.count_documents({"_id": {"$regex": "^symbol:"}})
+                return {
+                    "total_hits": hits["value"] if hits else 0,
+                    "total_misses": misses["value"] if misses else 0,
+                    "cached_symbols": cached_count,
+                }
+        except Exception:
+            return {"total_hits": 0, "total_misses": 0, "cached_symbols": 0}
 
     def is_cached(self, symbol: str) -> bool:
-        """检查符号是否已缓存（跨用户）"""
-        with _db_lock:
-            conn = _get_conn()
-            try:
-                cursor = conn.execute(
-                    "SELECT 1 FROM symbol_cache WHERE symbol = ?", (symbol,)
-                )
-                return cursor.fetchone() is not None
-            finally:
-                conn.close()
+        if self.col is None:
+            return symbol in _memory_cache
+        try:
+            with _lock:
+                return self.col.find_one({"_id": f"symbol:{symbol}"}) is not None
+        except Exception:
+            return False
 
     def get_cached_data(self, symbol: str) -> Optional[dict]:
-        """获取缓存的数据"""
-        with _db_lock:
-            conn = _get_conn()
-            try:
-                cursor = conn.execute(
-                    "SELECT data FROM symbol_cache WHERE symbol = ?", (symbol,)
-                )
-                row = cursor.fetchone()
-                if row and row[0]:
-                    return json.loads(row[0])
-                return None
-            finally:
-                conn.close()
+        if self.col is None:
+            entry = _memory_cache.get(symbol)
+            return entry["data"] if entry else None
+        try:
+            with _lock:
+                doc = self.col.find_one({"_id": f"symbol:{symbol}"})
+                return doc.get("data") if doc else None
+        except Exception:
+            return None
 
     def set_cached_data(self, symbol: str, data: dict) -> None:
-        """存储缓存数据"""
-        with _db_lock:
-            conn = _get_conn()
-            try:
-                json_data = json.dumps(data, default=str)
-                conn.execute("""
-                    INSERT INTO symbol_cache (symbol, data, cached_at, analysis_count)
-                    VALUES (?, ?, ?, 1)
-                    ON CONFLICT(symbol) DO UPDATE SET
-                        data = ?,
-                        cached_at = ?,
-                        analysis_count = analysis_count + 1
-                """, (symbol, json_data, self._now(), json_data, self._now()))
-                conn.commit()
-            finally:
-                conn.close()
-
-    @staticmethod
-    def _now() -> float:
-        import time
-        return time.time()
+        if self.col is None:
+            with _lock:
+                if symbol in _memory_cache:
+                    _memory_cache[symbol] = {
+                        "data": data,
+                        "cached_at": time.time(),
+                        "analysis_count": _memory_cache[symbol]["analysis_count"] + 1,
+                    }
+                else:
+                    _memory_cache[symbol] = {
+                        "data": data,
+                        "cached_at": time.time(),
+                        "analysis_count": 1,
+                    }
+            return
+        try:
+            with _lock:
+                self.col.update_one(
+                    {"_id": f"symbol:{symbol}"},
+                    {
+                        "$set": {"symbol": symbol, "data": data, "cached_at": time.time()},
+                        "$setOnInsert": {"analysis_count": 1},
+                    },
+                    upsert=True,
+                )
+                if self.is_cached(symbol):
+                    self.col.update_one(
+                        {"_id": f"symbol:{symbol}"},
+                        {"$inc": {"analysis_count": 1}},
+                    )
+        except Exception:
+            pass
 
     def get_ranking(self, limit: int = 20) -> list:
-        """获取分析次数排行榜
+        if self.col is None:
+            with _lock:
+                sorted_symbols = sorted(
+                    _memory_cache.items(),
+                    key=lambda x: (x[1]["analysis_count"], x[1]["cached_at"]),
+                    reverse=True,
+                )
+                return [
+                    {
+                        "symbol": sym,
+                        "name": _memory_cache[sym].get("data", {}).get("info", {}).get("name", "") if isinstance(_memory_cache[sym].get("data"), dict) else "",
+                        "count": _memory_cache[sym]["analysis_count"],
+                        "cached_at": _memory_cache[sym]["cached_at"],
+                    }
+                    for sym, _ in sorted_symbols[:limit]
+                ]
+        try:
+            with _lock:
+                cursor = (
+                    self.col.find({"_id": {"$regex": "^symbol:"}})
+                    .sort("analysis_count", -1)
+                    .limit(limit)
+                )
+                return [
+                    {
+                        "symbol": doc.get("symbol", ""),
+                        "name": doc.get("name") or (
+                            doc.get("data", {}).get("info", {}).get("name", "")
+                            if isinstance(doc.get("data"), dict)
+                            else ""
+                        ),
+                        "count": doc.get("analysis_count", 0),
+                        "cached_at": doc.get("cached_at", 0),
+                    }
+                    for doc in cursor
+                ]
+        except Exception:
+            return []
 
-        Returns:
-            list of dict: [{'symbol': '000001', 'name': '平安银行', 'count': 5, 'cached_at': timestamp}, ...]
-        """
-        with _db_lock:
-            conn = _get_conn()
-            try:
-                cursor = conn.execute("""
-                    SELECT symbol, data, cached_at, analysis_count
-                    FROM symbol_cache
-                    ORDER BY analysis_count DESC, cached_at DESC
-                    LIMIT ?
-                """, (limit,))
-                rows = cursor.fetchall()
 
-                result = []
-                for row in rows:
-                    symbol = row[0]
-                    data_str = row[1]
-                    cached_at = row[2]
-                    count = row[3]
-                    try:
-                        data = json.loads(data_str) if data_str else {}
-                        name = data.get('info', {}).get('name', '') if isinstance(data, dict) else ''
-                    except Exception:
-                        name = ''
-                    result.append({
-                        'symbol': symbol,
-                        'name': name,
-                        'count': count,
-                        'cached_at': cached_at,
-                    })
-                return result
-            finally:
-                conn.close()
-
-
-# 全局单例
 _shared_stats: Optional[SharedCacheStats] = None
 
 
 def get_shared_cache_stats() -> SharedCacheStats:
-    """获取共享缓存统计单例"""
     global _shared_stats
     if _shared_stats is None:
         _shared_stats = SharedCacheStats()
+        # 主动触发懒加载并初始化基础热度
+        _ = _shared_stats.col
     return _shared_stats

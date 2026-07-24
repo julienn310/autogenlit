@@ -5,21 +5,29 @@ A股智能体分析系统 - Streamlit 版本
 
 import streamlit as st
 import sys
+import os
 import pandas as pd
 import threading
 from pathlib import Path
 import time
+
+print("=== APP STARTING ===", flush=True)
+print(f"Python path: {sys.path[:3]}", flush=True)
+print(f"CWD: {os.getcwd()}", flush=True)
+print(f"src exists: {Path('/mount/src/autogenlit/src').exists() if os.path.exists('/mount/src') else 'not on cloud'}", flush=True)
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.data.astock_collector import AStockDataCollector
 from src.data.market_collector import fetch_major_indices
 from src.data.news_collector import fetch_news
+from src.data.announcement_collector import fetch_announcements, _classify_intent, _fetch_ann_content
 from src.analysis.financial_analyzer import FinancialAnalyzer
 from src.risk.risk_analyzer import RiskAnalyzer
 from src.risk.joint_risk_analyzer import JointRiskAnalyzer
 from src.optimization.portfolio_optimizer import PortfolioOptimizer
 from src.agents.pdf_risk_agent import PDFRiskAgent
+from src.agents.announcement_agent import AnnouncementAgent
 from src.cache.shared_cache_stats import get_shared_cache_stats
 
 # 页面配置
@@ -159,7 +167,7 @@ def get_cached_analysis(symbol: str):
 MINIMAX_API_KEY = "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
 
 def get_api_key():
-    return MINIMAX_API_KEY
+    return "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
 
 # 中文标签映射
 FINANCIAL_METRICS_LABELS = {
@@ -484,7 +492,7 @@ Piotroski F-Score从三大维度9个指标评分：
     return report
 
 def display_cache_stats():
-    """显示缓存统计（从SQLite共享数据库读取）"""
+    """显示缓存统计（从MongoDB共享数据库读取）"""
     shared_cache = get_shared_cache_stats()
     stats = shared_cache.get_stats()
 
@@ -496,6 +504,38 @@ def display_cache_stats():
     with col3:
         st.metric("缓存未命中", stats['total_misses'])
 
+
+def display_stock_ranking():
+    """显示个股热度榜单（带可视化图表）"""
+    shared_cache = get_shared_cache_stats()
+    stats = shared_cache.get_stats()
+    ranking = shared_cache.get_ranking(limit=20)
+
+    # 标题行
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.markdown("#### 🔥 个股热度榜")
+    with col2:
+        total = stats['total_hits'] + stats['total_misses']
+        st.metric("总分析次数", total)
+    with col3:
+        st.metric("上榜股票", len(ranking))
+
+    if ranking:
+        df = pd.DataFrame(ranking)
+        df.columns = ["股票代码", "股票名称", "分析次数", "最近分析"]
+        df.index = range(1, len(df) + 1)
+        df.index.name = "排名"
+
+        # ---- 横向柱状图 ----
+        chart_df = df.head(10).set_index("股票名称")["分析次数"]
+        st.bar_chart(chart_df, horizontal=True, height=280)
+
+        # ---- 榜单表格 ----
+        st.dataframe(df, use_container_width=True, hide_index=False, height=300)
+    else:
+        st.info("暂无热度数据")
+
 # 主应用
 def main():
     with st.sidebar:
@@ -504,7 +544,7 @@ def main():
         st.success("API Key 已配置")
         st.divider()
         page = st.radio("导航", [
-            "仪表板", "财务分析", "投资组合", "风险分析", "PDF年报分析", "多智能体协作"
+            "仪表板", "财务分析", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
         ], index=0)
         st.divider()
         st.caption("系统状态: 正常运行")
@@ -524,13 +564,19 @@ def main():
         with col3: st.metric("智能体数量", "4", "协作分析")
         with col4: st.metric("PDF分析", "支持", "年报风险识别")
 
+        # ========== 个股热度榜 ==========
+        st.divider()
+        display_stock_ranking()
+        st.divider()
+
         # ========== 全球市场行情 ==========
         st.markdown('<div class="section-title">🌏 全球市场行情</div>', unsafe_allow_html=True)
 
-        try:
-            indices = fetch_major_indices()
-        except Exception:
-            indices = []
+        with st.spinner("🌐 正在加载全球指数，请稍候..."):
+            try:
+                indices = fetch_major_indices()
+            except Exception:
+                indices = []
 
         if indices:
             # 按涨跌幅排序
@@ -567,90 +613,101 @@ def main():
         st.divider()
 
         # ========== 金融舆情简报 ==========
-        st.markdown('<div class="section-title">📰 金融舆情简报</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📰 舆情与市场动态</div>', unsafe_allow_html=True)
 
-        try:
-            news_data = fetch_news()
-        except Exception:
-            news_data = {'kol': [], 'a_stock': [], 'hk_stock': [], 'us_stock': [], 'intl': [], 'macro': [], 'caixin': [], 'caixun': []}
+        with st.spinner("📡 正在抓取新闻与舆情，请稍候..."):
+            try:
+                news_data = fetch_news()
+            except Exception:
+                news_data = {'timeline': [], 'kol': [], 'weibo_sentiment': [], 'xueqiu_hot': [], 'flash': []}
 
+        timeline = news_data.get('timeline', [])
         kol_list = news_data.get('kol', [])
-        a_stock = news_data.get('a_stock', [])
-        hk_stock = news_data.get('hk_stock', [])
-        us_stock = news_data.get('us_stock', [])
-        intl_list = news_data.get('intl', [])
-        macro_list = news_data.get('macro', [])
-        caixin_list = news_data.get('caixin', [])
-        caixun_list = news_data.get('caixun', [])
+        weibo_sentiment = news_data.get('weibo_sentiment', [])
+        xueqiu_hot = news_data.get('xueqiu_hot', [])
+        flash = news_data.get('flash', [])
 
-        # ---- KOL 观点专区 ----
-        st.markdown("**💬 KOL 深度观点**（点击展开全文 | 数据来源：东财/新浪/财联社等媒体报道）", unsafe_allow_html=True)
-        if kol_list:
-            kol_cols = st.columns(min(len(kol_list), 3))
-            for i, n in enumerate(kol_list[:9]):
-                with kol_cols[i % len(kol_cols)]:
-                    t = n.get('time', '')
-                    time_str = t[5:] if t else ''  # MM-DD HH:MM
-                    with st.expander(
-                        f"👤 **{n.get('kol_name', '')}** · {time_str}  {n['title'][:20]}...",
-                        expanded=False
-                    ):
-                        st.markdown(f"**{n['title']}**")
-                        if n.get('url'):
-                            st.markdown(f"[来源链接 →]({n['url']})")
-                        st.caption(f"来源: {n.get('source', '东财')}")
-        else:
-            st.caption("　暂无KOL观点数据（通常在工作日交易时段更新，可关注「财联社」快讯）")
+        # ── 第一行：微博情绪 + 雪球热帖 ──
+        col_ws, col_xq = st.columns(2)
+
+        with col_ws:
+            st.markdown("**📊 微博情绪指数**（舆情冷暖）", unsafe_allow_html=True)
+            if weibo_sentiment:
+                for n in weibo_sentiment[:10]:
+                    title = n.get('title', '')
+                    # 提取指数值判断颜色
+                    import re
+                    m = re.search(r'([+-]?[\d.]+)', title.split(':')[-1] if ':' in title else '')
+                    if m:
+                        try:
+                            val = float(m.group(1))
+                            color = '#c00' if val > 0 else ('#1F4E79' if val < 0 else '#888')
+                        except:
+                            color = '#666'
+                    else:
+                        color = '#666'
+                    st.markdown(f"<span style='color:{color}'>● {title[:30]}</span>", unsafe_allow_html=True)
+            else:
+                st.caption("暂无数据")
+
+        with col_xq:
+            st.markdown("**🔥 雪球热议榜**（讨论热度）", unsafe_allow_html=True)
+            if xueqiu_hot:
+                for n in xueqiu_hot[:10]:
+                    title = n.get('title', '')
+                    url = n.get('url', '')
+                    if url:
+                        st.markdown(f"[{title[:35]}]({url})")
+                    else:
+                        st.markdown(f"{title[:35]}")
+            else:
+                st.caption("暂无数据")
 
         st.divider()
 
-        # ---- 财联社快讯（独立高亮区）----
-        if caixun_list:
-            st.markdown("**⚡ 财联社快讯**", unsafe_allow_html=True)
-            caixun_cols = st.columns(3)
-            for i, n in enumerate(caixun_list[:12]):
-                with caixun_cols[i % 3]:
+        # ── 第二行：快讯 + 最新资讯 ──
+        col_flash, col_news = st.columns([1, 2])
+
+        with col_flash:
+            st.markdown("**⚡ A股快讯**", unsafe_allow_html=True)
+            if flash:
+                for n in flash[:8]:
                     t = n.get('time', '')
                     time_str = t[5:] if t else ''
-                    short = n.get('title', '')[:32] + '...' if len(n.get('title', '')) > 32 else n.get('title', '')
-                    with st.expander(f"⚡ {time_str} {short}", expanded=False):
-                        st.markdown(f"**{n.get('title', '')}**")
+                    short = n.get('title', '')[:28] + '...' if len(n.get('title', '')) > 28 else n.get('title', '')
+                    st.markdown(f"**{time_str}** {short}")
+            else:
+                st.caption("暂无数据")
+
+        with col_news:
+            st.markdown("**📰 最新资讯**（点击展开）", unsafe_allow_html=True)
+            if timeline:
+                for n in timeline[:12]:
+                    title = n.get('title', '')
+                    short = title[:40] + '...' if len(title) > 40 else title
+                    t = n.get('time', '')
+                    time_str = t[5:] if t else ''
+                    src = n.get('source', '')
+                    with st.expander(f"{time_str} {short}", expanded=False):
+                        st.markdown(f"**{title}**")
                         if n.get('url'):
                             st.markdown(f"[查看详情 →]({n['url']})")
+                        st.caption(f"来源: {src}")
+            else:
+                st.caption("暂无数据")
 
-        st.divider()
-
-        # ---- 市场资讯网格 ----
-        st.markdown("**📊 市场资讯**（点击展开详情 | 数据来源：东财快讯/新浪财经/WSJ/财新）", unsafe_allow_html=True)
-
-        def render_news_card(news_list, label, emoji, col_width=1):
-            """单个新闻栏"""
-            with col_width:
-                st.markdown(f"{emoji} **{label}**")
-                if news_list:
-                    for n in news_list[:5]:
-                        title = n.get('title', '')
-                        short = title[:36] + '...' if len(title) > 36 else title
-                        t = n.get('time', '')
-                        time_str = t[5:] if t else ''
-                        src = n.get('source', '')
-                        with st.expander(f"{time_str} {short}", expanded=False):
-                            st.markdown(f"**{title}**")
-                            if n.get('url'):
-                                st.markdown(f"[查看详情 →]({n['url']})")
-                            st.caption(f"来源: {src}")
-                else:
-                    st.caption("暂无")
-
-        grid_cols = st.columns(3)
-        render_news_card(a_stock[:5], 'A股', '📈', grid_cols[0])
-        render_news_card(hk_stock[:5], '港股', '🇭🇰', grid_cols[1])
-        render_news_card(us_stock[:5], '美股', '🇺🇸', grid_cols[2])
-
-        grid_cols2 = st.columns(3)
-        render_news_card(intl_list[:5], '国际(WSJ)', '🌍', grid_cols2[0])
-        render_news_card(macro_list[:5], '宏观/期货', '📉', grid_cols2[1])
-        render_news_card(caixin_list[:5], '财新', '📰', grid_cols2[2])
+        # ── KOL 动态 ──
+        if kol_list:
+            st.divider()
+            st.markdown("**💬 KOL 最新言论**", unsafe_allow_html=True)
+            for n in kol_list[:6]:
+                with st.expander(
+                    f"👤 {n.get('kol', '')} · {n.get('time', '')[5:] if n.get('time') else ''} — {n.get('title', '')[:40]}...",
+                    expanded=False
+                ):
+                    st.markdown(f"**{n.get('title', '')}**")
+                    if n.get('url'):
+                        st.markdown(f"[来源链接 →]({n['url']})")
 
         st.divider()
 
@@ -661,7 +718,7 @@ def main():
             symbol = st.text_input("输入股票代码", placeholder="例如: 000001", label_visibility="collapsed")
         with col2:
             st.write("")
-            analyze_btn = st.button("查询", type="primary", use_container_width=True)
+            analyze_btn = st.button("查询", type="primary", width='stretch')
 
         if analyze_btn and symbol:
             collectors = init_collectors()
@@ -1305,9 +1362,141 @@ def main():
                 st.markdown("#### 完整榜单")
                 display_df = df_ranking[['排名', 'symbol', '股票名称', '分析次数']].copy()
                 display_df.columns = ['排名', '代码', '股票名称', '分析次数']
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.dataframe(display_df, width='stretch', hide_index=True)
             else:
                 st.info("暂无分析记录，请先在「综合年报分析」中分析股票")
+
+    # ==================== 公告解读 ====================
+    elif page == "公告解读":
+        st.markdown("### 📋 公司公告解读")
+
+        st.markdown("""
+        <div style="background:#f5f6f8;border-radius:12px;padding:15px;margin-bottom:20px;">
+        输入股票代码，自动抓取近90天公告，AI即时解读公司公告意图、管理层动向。<br>
+        <b>数据来源：</b>东方财富 &nbsp;|&nbsp; <b>覆盖：</b>高管变动/业绩/分红/回购/增持/关联交易/监管问询等
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 初始化 session_state
+        if 'ann_anns' not in st.session_state:
+            st.session_state['ann_anns'] = None
+        if 'ann_symbol' not in st.session_state:
+            st.session_state['ann_symbol'] = ""
+        if 'ann_analysis' not in st.session_state:
+            st.session_state['ann_analysis'] = None  # 综合解读结果
+        if 'ann_selected' not in st.session_state:
+            st.session_state['ann_selected'] = None  # 当前选中的公告
+        if 'ann_selected_result' not in st.session_state:
+            st.session_state['ann_selected_result'] = None
+
+        col_sym, col_days = st.columns([2, 1])
+        with col_sym:
+            ann_symbol = st.text_input("股票代码", value=st.session_state.get('ann_symbol', ''), placeholder="如：000001（平安银行）", key="ann_sym_input")
+        with col_days:
+            ann_days = st.slider("公告回溯天数", 30, 180, 90, key="ann_days_slider")
+
+        col_fetch, col_clear = st.columns([1, 1])
+        with col_fetch:
+            fetchClicked = st.button("🔍 抓取公告", type="primary", width='stretch')
+        with col_clear:
+            if st.button("🗑 清空", width='stretch'):
+                st.session_state['ann_anns'] = None
+                st.session_state['ann_symbol'] = ""
+                st.session_state['ann_analysis'] = None
+                st.session_state['ann_selected'] = None
+                st.session_state['ann_selected_result'] = None
+                st.rerun()
+
+        anns = st.session_state.get('ann_anns')
+
+        if fetchClicked and ann_symbol:
+            ann_symbol = ann_symbol.strip()
+            st.session_state['ann_symbol'] = ann_symbol
+            with st.spinner("正在抓取公告..."):
+                anns = fetch_announcements(ann_symbol, days=ann_days)
+                st.session_state['ann_anns'] = anns
+                st.session_state['ann_analysis'] = None
+                st.session_state['ann_selected'] = None
+                st.session_state['ann_selected_result'] = None
+
+        if anns:
+            from collections import Counter
+            cats = Counter(a['category'] for a in anns)
+            cat_cols = st.columns(min(len(cats), 6))
+            for idx, (cat, cnt) in enumerate(cats.most_common()):
+                with cat_cols[idx % 6]:
+                    st.metric(cat, f"{cnt}条")
+
+            st.divider()
+
+            # ===== 综合AI解读 =====
+            if st.button("🧠 AI综合解读全部公告", type="primary"):
+                with st.spinner("正在深度分析..."):
+                    agent = AnnouncementAgent(get_api_key())
+                    st.session_state['ann_analysis'] = agent.analyze(
+                        st.session_state['ann_symbol'], days=ann_days
+                    )
+
+            if st.session_state.get('ann_analysis'):
+                st.markdown("#### 🧠 AI综合解读")
+                st.markdown(st.session_state['ann_analysis'])
+                st.divider()
+
+            # ===== 公告列表 =====
+            st.markdown("#### 📑 公告列表")
+            selected = st.session_state.get('ann_selected')
+
+            for i, ann in enumerate(anns[:50]):
+                ann_key = f"ann_{i}"
+                exp_state = selected == ann_key
+
+                with st.expander(f"**{ann['date']}** [{ann['category']}] {ann['title'][:65]}", expanded=exp_state):
+                    st.caption(f"来源：{ann['source']} | 分类：{ann['category']}")
+                    st.markdown(f"**{ann['title']}**")
+
+                    # 预计算的意图标签
+                    intent = _classify_intent(ann['title'], ann['category'])
+                    if intent:
+                        st.info(f"💡 AI初步判断：{intent}")
+
+                    if ann.get('url'):
+                        st.markdown(f"[🔗 查看原文]({ann['url']})")
+
+                    # 内容：按需获取（避免50条全部请求拖慢速度）
+                    ann_content_key = f"ann_content_{i}"
+                    cached = st.session_state.get(ann_content_key)
+                    if cached:
+                        with st.expander("📄 公告内容", expanded=True):
+                            st.text(cached)
+                    else:
+                        col_btn, col_status = st.columns([1, 3])
+                        with col_btn:
+                            if st.button("📖 获取内容", key=f"fetch_{i}", width='stretch'):
+                                with st.spinner("正在获取内容..."):
+                                    content = _fetch_ann_content(ann)
+                                    st.session_state[ann_content_key] = content
+                                st.rerun()
+                        with col_status:
+                            st.caption("点击「📖 获取内容」查看公告正文")
+
+                    # 深度解读按钮
+                    col_ai, col_spacer = st.columns([1, 3])
+                    with col_ai:
+                        if st.button("🤖 深度解读", key=f"ai_{i}"):
+                            with st.spinner("正在解读..."):
+                                agent = AnnouncementAgent(get_api_key())
+                                result = agent.analyze_single(ann, company_name="")
+                            st.session_state['ann_selected_result'] = result
+                            st.session_state['ann_selected'] = ann_key
+
+                    # 显示深度解读结果
+                    if st.session_state.get('ann_selected') == ann_key and st.session_state.get('ann_selected_result'):
+                        st.markdown("---")
+                        st.markdown(st.session_state['ann_selected_result'])
+        elif st.session_state.get('ann_symbol') and not fetchClicked:
+            st.warning("请点击「抓取公告」按钮开始分析")
+        else:
+            st.info("👆 输入股票代码，点击「抓取公告」开始")
 
     # ==================== 多智能体协作 ====================
     elif page == "多智能体协作":
