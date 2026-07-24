@@ -1,85 +1,147 @@
 """
-共享缓存统计模块 - 内存实现（Streamlit Cloud 兼容）
-所有用户共享同一内存副本（进程内），单实例部署最稳定
+共享缓存统计模块 - MongoDB 实现（Streamlit Cloud 兼容）
 """
 
-import threading
 import time
+import threading
 from typing import Optional
+
+try:
+    from pymongo import MongoClient
+    import streamlit as st
+    MONGODB_AVAILABLE = True
+except ImportError:
+    MONGODB_AVAILABLE = False
+
 
 _lock = threading.Lock()
 
-# 进程内共享数据（单实例 Streamlit Cloud 最稳定）
-_cache_stats: dict = {
-    "total_hits": 0,
-    "total_misses": 0,
-}
-_symbol_cache: dict = {}  # symbol -> {"data": ..., "cached_at": ..., "analysis_count": ...}
+
+def _get_mongo_uri() -> str:
+    """获取 MongoDB 连接字符串，优先从 st.secrets 读"""
+    try:
+        return st.secrets["MONGODB_URI"]
+    except Exception:
+        # 本地开发回退到空，模块仍可导入
+        return ""
+
+
+def _get_collection():
+    """懒加载 MongoDB collection（连接池由 pymongo 自动管理）"""
+    uri = _get_mongo_uri()
+    if not uri:
+        return None
+    client = MongoClient(uri, appName="a_stock_research")
+    db = client.get_database("stock_cache")
+    return db["cache_stats"]
 
 
 class SharedCacheStats:
-    """轻量级共享缓存统计（内存版，Streamlit Cloud 兼容）"""
+    """共享缓存统计（MongoDB 版，跨实例/跨用户持久化）"""
+
+    def __init__(self):
+        self._col = None
+
+    @property
+    def col(self):
+        if self._col is None:
+            self._col = _get_collection()
+        return self._col
 
     def record_hit(self, symbol: str) -> None:
+        if not self.col:
+            return
         with _lock:
-            _cache_stats["total_hits"] += 1
-            if symbol in _symbol_cache:
-                _symbol_cache[symbol]["analysis_count"] += 1
+            self.col.update_one(
+                {"_id": "total_hits"},
+                {"$inc": {"value": 1}},
+                upsert=True,
+            )
+            self.col.update_one(
+                {"_id": f"symbol:{symbol}"},
+                {"$inc": {"analysis_count": 1}, "$set": {"symbol": symbol}},
+                upsert=True,
+            )
 
     def record_miss(self) -> None:
+        if not self.col:
+            return
         with _lock:
-            _cache_stats["total_misses"] += 1
+            self.col.update_one(
+                {"_id": "total_misses"},
+                {"$inc": {"value": 1}},
+                upsert=True,
+            )
 
     def get_stats(self) -> dict:
+        if not self.col:
+            return {"total_hits": 0, "total_misses": 0, "cached_symbols": 0}
         with _lock:
+            hits = self.col.find_one({"_id": "total_hits"})
+            misses = self.col.find_one({"_id": "total_misses"})
+            cached_count = self.col.count_documents(
+                {"_id": {"$regex": "^symbol:"}}
+            )
             return {
-                "total_hits": _cache_stats.get("total_hits", 0),
-                "total_misses": _cache_stats.get("total_misses", 0),
-                "cached_symbols": len(_symbol_cache),
+                "total_hits": hits["value"] if hits else 0,
+                "total_misses": misses["value"] if misses else 0,
+                "cached_symbols": cached_count,
             }
 
     def is_cached(self, symbol: str) -> bool:
+        if not self.col:
+            return False
         with _lock:
-            return symbol in _symbol_cache
+            return self.col.find_one({"_id": f"symbol:{symbol}"}) is not None
 
     def get_cached_data(self, symbol: str) -> Optional[dict]:
+        if not self.col:
+            return None
         with _lock:
-            entry = _symbol_cache.get(symbol)
-            return entry["data"] if entry else None
+            doc = self.col.find_one({"_id": f"symbol:{symbol}"})
+            return doc.get("data") if doc else None
 
     def set_cached_data(self, symbol: str, data: dict) -> None:
+        if not self.col:
+            return
         with _lock:
-            if symbol in _symbol_cache:
-                _symbol_cache[symbol]["data"] = data
-                _symbol_cache[symbol]["cached_at"] = time.time()
-                _symbol_cache[symbol]["analysis_count"] += 1
-            else:
-                _symbol_cache[symbol] = {
-                    "data": data,
-                    "cached_at": time.time(),
-                    "analysis_count": 1,
-                }
+            self.col.update_one(
+                {"_id": f"symbol:{symbol}"},
+                {
+                    "$set": {
+                        "symbol": symbol,
+                        "data": data,
+                        "cached_at": time.time(),
+                    },
+                    "$setOnInsert": {
+                        "analysis_count": 1,
+                    },
+                },
+                upsert=True,
+            )
 
     def get_ranking(self, limit: int = 20) -> list:
+        if not self.col:
+            return []
         with _lock:
-            sorted_symbols = sorted(
-                _symbol_cache.items(),
-                key=lambda x: (x[1]["analysis_count"], x[1]["cached_at"]),
-                reverse=True,
+            cursor = (
+                self.col.find({"_id": {"$regex": "^symbol:"}})
+                .sort("analysis_count", -1)
+                .limit(limit)
             )
             result = []
-            for symbol, entry in sorted_symbols[:limit]:
-                data = entry.get("data", {})
-                name = ""
-                if isinstance(data, dict):
-                    info = data.get("info", {})
-                    if isinstance(info, dict):
-                        name = info.get("name", "")
+            for doc in cursor:
                 result.append({
-                    "symbol": symbol,
-                    "name": name,
-                    "count": entry["analysis_count"],
-                    "cached_at": entry["cached_at"],
+                    "symbol": doc.get("symbol", ""),
+                    "name": (
+                        doc.get("data", {})
+                        .get("info", {})
+                        .get("name", "")
+                        if isinstance(doc.get("data"), dict)
+                        else ""
+                    ),
+                    "count": doc.get("analysis_count", 0),
+                    "cached_at": doc.get("cached_at", 0),
                 })
             return result
 
