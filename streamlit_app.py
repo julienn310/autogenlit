@@ -11,6 +11,11 @@ import threading
 from pathlib import Path
 import time
 
+print("=== APP STARTING ===", flush=True)
+print(f"Python path: {sys.path[:3]}", flush=True)
+print(f"CWD: {os.getcwd()}", flush=True)
+print(f"src exists: {Path('/mount/src/autogenlit/src').exists() if os.path.exists('/mount/src') else 'not on cloud'}", flush=True)
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.data.astock_collector import AStockDataCollector
