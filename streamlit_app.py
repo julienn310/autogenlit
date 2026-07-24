@@ -23,6 +23,7 @@ from src.risk.joint_risk_analyzer import JointRiskAnalyzer
 from src.optimization.portfolio_optimizer import PortfolioOptimizer
 from src.agents.pdf_risk_agent import PDFRiskAgent
 from src.agents.announcement_agent import AnnouncementAgent
+from src.cache.shared_cache_stats import get_shared_cache_stats
 
 # 页面配置
 st.set_page_config(
@@ -125,7 +126,21 @@ def init_collectors():
     }
 
 def get_cached_analysis(symbol: str):
-    """获取分析结果"""
+    """获取分析结果（使用SQLite共享缓存）"""
+    shared_cache = get_shared_cache_stats()
+
+    # 先检查共享缓存中是否有数据
+    cached_data = shared_cache.get_cached_data(symbol)
+    if cached_data is not None:
+        shared_cache.record_hit(symbol)
+        # 命中时也更新 analysis_count（累计分析次数）
+        shared_cache.set_cached_data(symbol, cached_data)
+        # 返回缓存的dict数据（注意：返回的是字典而非dataclass对象）
+        return cached_data
+
+    shared_cache.record_miss()
+
+    # 没有缓存，需要重新计算
     collectors = init_collectors()
     data = collectors['data_collector'].collect_stock_data(symbol)
     if not data or not data.get('info'):
@@ -133,12 +148,16 @@ def get_cached_analysis(symbol: str):
     risk_metrics = collectors['risk_analyzer'].calculate_metrics(data)
     joint_metrics = collectors['joint_risk_analyzer'].analyze(data)
 
-    return {
+    result = {
         'symbol': symbol,
         'info': data.get('info', {}),
         'risk_metrics': risk_metrics.to_dict() if hasattr(risk_metrics, 'to_dict') else risk_metrics,
         'joint_metrics': joint_metrics.to_dict() if hasattr(joint_metrics, 'to_dict') else joint_metrics,
     }
+
+    # 存入共享缓存
+    shared_cache.set_cached_data(symbol, result)
+    return result
 
 MINIMAX_API_KEY = "sk-cp-fuHam45Wah1ay6BsZk8ACLYzV3p8_ID5NgTwJE09Kc9kCFdzwiSYzOvD2IfceEcwA-d5l8Dehm7Cks11hQa6i4moTJk-pinWhpBlR2KxsOsJ1V8zZx5S5MY"
 
@@ -467,6 +486,18 @@ Piotroski F-Score从三大维度9个指标评分：
 
     return report
 
+def display_cache_stats():
+    """显示缓存统计（从SQLite共享数据库读取）"""
+    shared_cache = get_shared_cache_stats()
+    stats = shared_cache.get_stats()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("累计分析", stats['cached_symbols'], "只")
+    with col2:
+        st.metric("缓存命中", stats['total_hits'])
+    with col3:
+        st.metric("缓存未命中", stats['total_misses'])
 
 # 主应用
 def main():
@@ -1115,6 +1146,9 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
+            # 显示缓存统计
+            display_cache_stats()
+
             col1, col2 = st.columns([1, 3])
             with col1:
                 symbol_input = st.text_input("股票代码", placeholder="000001", key="comprehensive_symbol")
@@ -1245,7 +1279,50 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            st.info("榜单统计功能即将上线，请先在「综合年报分析」中分析股票")
+            display_cache_stats()
+
+            ranking = get_shared_cache_stats().get_ranking(limit=30)
+
+            if ranking:
+                # 转换为DataFrame便于可视化
+                import pandas as pd
+                df_ranking = pd.DataFrame(ranking)
+                df_ranking['排名'] = range(1, len(df_ranking) + 1)
+                df_ranking['股票名称'] = df_ranking['name'].apply(lambda x: x if x else df_ranking['symbol'])
+                df_ranking['分析次数'] = df_ranking['count']
+
+                # ---- 指标卡片 ----
+                total_stocks = len(df_ranking)
+                total_analysis = int(df_ranking['分析次数'].sum())
+                top_stock = df_ranking.iloc[0]['股票名称'] if not df_ranking.empty else '-'
+                top_count = int(df_ranking.iloc[0]['分析次数']) if not df_ranking.empty else 0
+
+                col1, col2, col3, col4 = st.columns(4)
+                with col1: st.metric("累计分析股票数", total_stocks)
+                with col2: st.metric("累计分析总次数", total_analysis)
+                with col3: st.metric("榜首", top_stock)
+                with col4: st.metric("榜首次数", top_count)
+
+                st.divider()
+
+                # ---- 柱状图：分析次数排行 ----
+                st.markdown("#### 分析次数排行榜（前15名）")
+                chart_data = df_ranking.head(15).copy()
+                chart_data['label'] = chart_data['股票名称'] + ' (' + chart_data['symbol'] + ')'
+
+                # 使用streamlit原生bar_chart
+                bar_df = chart_data.set_index('label')['分析次数']
+                st.bar_chart(bar_df, horizontal=True)
+
+                st.divider()
+
+                # ---- 详细榜单表格 ----
+                st.markdown("#### 完整榜单")
+                display_df = df_ranking[['排名', 'symbol', '股票名称', '分析次数']].copy()
+                display_df.columns = ['排名', '代码', '股票名称', '分析次数']
+                st.dataframe(display_df, width='stretch', hide_index=True)
+            else:
+                st.info("暂无分析记录，请先在「综合年报分析」中分析股票")
 
     # ==================== 公告解读 ====================
     elif page == "公告解读":
