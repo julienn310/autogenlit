@@ -505,13 +505,13 @@ def display_cache_stats():
         st.metric("缓存未命中", stats['total_misses'])
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=3, show_spinner=False)
 def _get_stats_cached():
     shared_cache = get_shared_cache_stats()
     return shared_cache.get_stats()
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def _get_ranking_cached():
     shared_cache = get_shared_cache_stats()
     return shared_cache.get_ranking(limit=20)
