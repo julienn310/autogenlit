@@ -20,11 +20,12 @@ _lock = threading.Lock()
 # 内存降级存储
 _memory_stats = {"total_hits": 0, "total_misses": 0}
 _memory_cache = {}  # symbol -> {"data": ..., "cached_at": ..., "analysis_count": ...}
-_use_memory = False
 
 
 def _get_mongo_collection():
-    """尝试连接 MongoDB，失败则返回 None"""
+    """懒加载 MongoDB collection，失败返回 None"""
+    if not MONGODB_AVAILABLE:
+        return None
     try:
         uri = st.secrets.get("MONGODB_URI", "")
         if not uri:
@@ -35,38 +36,32 @@ def _get_mongo_collection():
             serverSelectionTimeoutMS=5000,
             connectTimeoutMS=5000,
             socketTimeoutMS=5000,
-            tlsAllowInvalidCertificates=True,
         )
-        # 尝试 ping 验证连通性
         client.admin.command("ping")
         return client.get_database("stock_cache")["cache_stats"]
     except Exception:
         return None
 
 
-def _init_mongo():
-    global _use_memory
-    if MONGODB_AVAILABLE:
-        col = _get_mongo_collection()
-        if col is not None:
-            return col
-    _use_memory = True
-    return None
-
-
-# 启动时初始化
-_col = _init_mongo()
-
-
 class SharedCacheStats:
-    """共享缓存统计（MongoDB 主用，内存降级）"""
+    """共享缓存统计（MongoDB 主用，内存降级，懒加载）"""
+
+    def __init__(self):
+        self._col = None  # 懒加载，首次使用时才连接
 
     @property
     def col(self):
-        return _col
+        if self._col is None:
+            self._col = _get_mongo_collection()
+        return self._col
+
+    @property
+    def use_memory(self):
+        """检查是否应该使用内存模式（MongoDB 不可用时）"""
+        return self._col is None and MONGODB_AVAILABLE
 
     def record_hit(self, symbol: str) -> None:
-        if _use_memory or self.col is None:
+        if self.col is None:
             with _lock:
                 _memory_stats["total_hits"] = _memory_stats.get("total_hits", 0) + 1
                 if symbol in _memory_cache:
@@ -81,10 +76,10 @@ class SharedCacheStats:
                     upsert=True,
                 )
         except Exception:
-            self.record_hit(symbol)  # 重试内存
+            pass
 
     def record_miss(self) -> None:
-        if _use_memory or self.col is None:
+        if self.col is None:
             with _lock:
                 _memory_stats["total_misses"] = _memory_stats.get("total_misses", 0) + 1
             return
@@ -92,10 +87,10 @@ class SharedCacheStats:
             with _lock:
                 self.col.update_one({"_id": "total_misses"}, {"$inc": {"value": 1}}, upsert=True)
         except Exception:
-            self.record_miss()
+            pass
 
     def get_stats(self) -> dict:
-        if _use_memory or self.col is None:
+        if self.col is None:
             with _lock:
                 return {
                     "total_hits": _memory_stats.get("total_hits", 0),
@@ -113,19 +108,19 @@ class SharedCacheStats:
                     "cached_symbols": cached_count,
                 }
         except Exception:
-            return self.get_stats()  # 降级
+            return {"total_hits": 0, "total_misses": 0, "cached_symbols": 0}
 
     def is_cached(self, symbol: str) -> bool:
-        if _use_memory or self.col is None:
+        if self.col is None:
             return symbol in _memory_cache
         try:
             with _lock:
                 return self.col.find_one({"_id": f"symbol:{symbol}"}) is not None
         except Exception:
-            return self.is_cached(symbol)
+            return False
 
     def get_cached_data(self, symbol: str) -> Optional[dict]:
-        if _use_memory or self.col is None:
+        if self.col is None:
             entry = _memory_cache.get(symbol)
             return entry["data"] if entry else None
         try:
@@ -133,10 +128,10 @@ class SharedCacheStats:
                 doc = self.col.find_one({"_id": f"symbol:{symbol}"})
                 return doc.get("data") if doc else None
         except Exception:
-            return self.get_cached_data(symbol)
+            return None
 
     def set_cached_data(self, symbol: str, data: dict) -> None:
-        if _use_memory or self.col is None:
+        if self.col is None:
             with _lock:
                 if symbol in _memory_cache:
                     _memory_cache[symbol] = {
@@ -161,11 +156,17 @@ class SharedCacheStats:
                     },
                     upsert=True,
                 )
+                # 如果是更新已有记录，额外 increment analysis_count
+                if self.is_cached(symbol):
+                    self.col.update_one(
+                        {"_id": f"symbol:{symbol}"},
+                        {"$inc": {"analysis_count": 1}},
+                    )
         except Exception:
-            self.set_cached_data(symbol, data)
+            pass
 
     def get_ranking(self, limit: int = 20) -> list:
-        if _use_memory or self.col is None:
+        if self.col is None:
             with _lock:
                 sorted_symbols = sorted(
                     _memory_cache.items(),
@@ -198,7 +199,7 @@ class SharedCacheStats:
                     for doc in cursor
                 ]
         except Exception:
-            return self.get_ranking(limit)
+            return []
 
 
 _shared_stats: Optional[SharedCacheStats] = None
