@@ -89,6 +89,7 @@ def _init_base_hotness(col):
         result = col.bulk_write(ops, ordered=False)
         # 验证：确认有 8 条记录
         count = col.count_documents({"_id": {"$regex": "^symbol:"}})
+        print(f"[_init_base_hotness] bulk_write完成，写入{len(BASE_HOT_STOCKS)}条，验证count={count}", flush=True)
         return count >= len(BASE_HOT_STOCKS)
     except Exception as e:
         import sys
@@ -168,13 +169,15 @@ class SharedCacheStats:
                 ]
                 agg = list(self.col.aggregate(pipeline))
                 total_analysis = agg[0]["total"] if agg else 0
+                print(f"[get_stats] hits={hits}, misses={misses}, cached_count={cached_count}, total_analysis={total_analysis}", flush=True)
                 return {
                     "total_hits": hits["value"] if hits else 0,
                     "total_misses": misses["value"] if misses else 0,
                     "total_analysis": total_analysis,
                     "cached_symbols": cached_count,
                 }
-        except Exception:
+        except Exception as e:
+            print(f"[get_stats] 异常: {type(e).__name__}: {e}", flush=True)
             return {"total_hits": 0, "total_misses": 0, "total_analysis": 0, "cached_symbols": 0}
 
     def is_cached(self, symbol: str) -> bool:
