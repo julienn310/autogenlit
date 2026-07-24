@@ -26,4 +26,5 @@ reportlab>=4.0.0
 python-multipart>=0.0.6
 redis>=4.5.0
 pyyaml>=6.0.0
-pymongo[srv]>=4.6.0
+pymongo>=4.6.0
+dnspython>=2.0.0
