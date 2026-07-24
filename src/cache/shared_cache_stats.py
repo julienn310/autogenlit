@@ -148,6 +148,8 @@ class SharedCacheStats:
             pass
 
     def get_stats(self) -> dict:
+        # 强制触发 col 的懒加载初始化（get_ranking 之后才触发太晚了）
+        _ = self.col
         if self.col is None:
             with _lock:
                 total_analysis = sum(v["analysis_count"] for v in _memory_cache.values())
