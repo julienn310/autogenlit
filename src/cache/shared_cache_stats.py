@@ -49,7 +49,7 @@ class SharedCacheStats:
         return self._col
 
     def record_hit(self, symbol: str) -> None:
-        if not self.col:
+        if self.col is None:
             return
         with _lock:
             self.col.update_one(
@@ -64,7 +64,7 @@ class SharedCacheStats:
             )
 
     def record_miss(self) -> None:
-        if not self.col:
+        if self.col is None:
             return
         with _lock:
             self.col.update_one(
@@ -74,7 +74,7 @@ class SharedCacheStats:
             )
 
     def get_stats(self) -> dict:
-        if not self.col:
+        if self.col is None:
             return {"total_hits": 0, "total_misses": 0, "cached_symbols": 0}
         with _lock:
             hits = self.col.find_one({"_id": "total_hits"})
@@ -89,20 +89,20 @@ class SharedCacheStats:
             }
 
     def is_cached(self, symbol: str) -> bool:
-        if not self.col:
+        if self.col is None:
             return False
         with _lock:
             return self.col.find_one({"_id": f"symbol:{symbol}"}) is not None
 
     def get_cached_data(self, symbol: str) -> Optional[dict]:
-        if not self.col:
+        if self.col is None:
             return None
         with _lock:
             doc = self.col.find_one({"_id": f"symbol:{symbol}"})
             return doc.get("data") if doc else None
 
     def set_cached_data(self, symbol: str, data: dict) -> None:
-        if not self.col:
+        if self.col is None:
             return
         with _lock:
             self.col.update_one(
@@ -121,7 +121,7 @@ class SharedCacheStats:
             )
 
     def get_ranking(self, limit: int = 20) -> list:
-        if not self.col:
+        if self.col is None:
             return []
         with _lock:
             cursor = (
