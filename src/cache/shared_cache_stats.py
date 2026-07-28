@@ -6,6 +6,7 @@
 import random
 import time
 import threading
+import os
 from typing import Optional
 
 try:
@@ -14,6 +15,22 @@ try:
     MONGODB_AVAILABLE = True
 except ImportError:
     MONGODB_AVAILABLE = False
+
+
+def _read_secrets():
+    """直接读 .streamlit/secrets.toml，不依赖 st.secrets（避免懒加载时机问题）"""
+    secrets_path = os.path.join(os.path.dirname(__file__), "..", "..", ".streamlit", "secrets.toml")
+    try:
+        import tomllib
+        with open(secrets_path, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        pass
+    # fallback: st.secrets
+    try:
+        return dict(st.secrets)
+    except Exception:
+        return {}
 
 
 _lock = threading.Lock()
@@ -33,7 +50,7 @@ BASE_HOT_STOCKS = {code: {"name": name, "count": count}
                    for code, name, count in zip(_BASE_CODES, _BASE_NAMES, _BASE_COUNTS)}
 
 # 全局单例 MongoClient
-_mongo_client: Optional[MongoClient] = None
+_mongo_client = None  # type: Optional[MongoClient]
 
 
 def _get_mongo_client():
@@ -44,7 +61,8 @@ def _get_mongo_client():
     if _mongo_client is not None:
         return _mongo_client
     try:
-        uri = st.secrets.get("MONGODB_URI", "")
+        secrets = _read_secrets()
+        uri = secrets.get("MONGODB_URI", "")
         if not uri:
             return None
         _mongo_client = MongoClient(
@@ -127,13 +145,12 @@ class SharedCacheStats:
         try:
             with _lock:
                 self.col.update_one(
-                    {"_id": "total_hits"}, {"$inc": {"value": 1}}, upsert=True, max_time_ms=2000
+                    {"_id": "total_hits"}, {"$inc": {"value": 1}}, upsert=True
                 )
                 self.col.update_one(
                     {"_id": f"symbol:{symbol}"},
                     {"$inc": {"analysis_count": 1}, "$set": {"symbol": symbol}},
                     upsert=True,
-                    max_time_ms=2000,
                 )
         except Exception:
             pass
@@ -146,7 +163,7 @@ class SharedCacheStats:
         try:
             with _lock:
                 self.col.update_one(
-                    {"_id": "total_misses"}, {"$inc": {"value": 1}}, upsert=True, max_time_ms=2000
+                    {"_id": "total_misses"}, {"$inc": {"value": 1}}, upsert=True
                 )
         except Exception:
             pass
@@ -165,16 +182,16 @@ class SharedCacheStats:
                 }
         try:
             with _lock:
-                hits = col.find_one({"_id": "total_hits"}, max_time_ms=3000)
-                misses = col.find_one({"_id": "total_misses"}, max_time_ms=3000)
+                hits = col.find_one({"_id": "total_hits"})
+                misses = col.find_one({"_id": "total_misses"})
                 cached_count = col.count_documents(
-                    {"_id": {"$regex": "^symbol:"}}, max_time_ms=3000
+                    {"_id": {"$regex": "^symbol:"}}
                 )
                 pipeline = [
                     {"$match": {"_id": {"$regex": "^symbol:"}}},
                     {"$group": {"_id": None, "total": {"$sum": "$analysis_count"}}},
                 ]
-                agg = list(col.aggregate(pipeline, maxTimeMS=3000))
+                agg = list(col.aggregate(pipeline))
                 total_analysis = agg[0]["total"] if agg else 0
                 return {
                     "total_hits": hits["value"] if hits else 0,
@@ -197,7 +214,7 @@ class SharedCacheStats:
             with _lock:
                 return (
                     self.col.find_one(
-                        {"_id": f"symbol:{symbol}"}, max_time_ms=2000
+                        {"_id": f"symbol:{symbol}"}
                     )
                     is not None
                 )
@@ -211,7 +228,7 @@ class SharedCacheStats:
         try:
             with _lock:
                 doc = self.col.find_one(
-                    {"_id": f"symbol:{symbol}"}, max_time_ms=2000
+                    {"_id": f"symbol:{symbol}"}
                 )
                 return doc.get("data") if doc else None
         except Exception:
@@ -233,6 +250,8 @@ class SharedCacheStats:
                         "analysis_count": 1,
                     }
             return
+        # is_cached 不在锁内，避免重入死锁
+        already_cached = self.is_cached(symbol)
         try:
             with _lock:
                 self.col.update_one(
@@ -242,13 +261,11 @@ class SharedCacheStats:
                         "$setOnInsert": {"analysis_count": 1},
                     },
                     upsert=True,
-                    max_time_ms=3000,
                 )
-                if self.is_cached(symbol):
+                if already_cached:
                     self.col.update_one(
                         {"_id": f"symbol:{symbol}"},
                         {"$inc": {"analysis_count": 1}},
-                        max_time_ms=2000,
                     )
         except Exception:
             pass
@@ -276,7 +293,7 @@ class SharedCacheStats:
         try:
             with _lock:
                 cursor = (
-                    col.find({"_id": {"$regex": "^symbol:"}}, max_time_ms=5000)
+                    col.find({"_id": {"$regex": "^symbol:"}})
                     .sort("analysis_count", -1)
                     .limit(limit)
                 )
@@ -303,4 +320,7 @@ def get_shared_cache_stats() -> SharedCacheStats:
     global _shared_stats
     if _shared_stats is None:
         _shared_stats = SharedCacheStats()
+        # 主动触发懒加载并初始化基础热度
+        _ = _shared_stats.col
+        _shared_stats._ensure_base_initialized()
     return _shared_stats

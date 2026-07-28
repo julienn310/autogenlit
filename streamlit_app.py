@@ -131,16 +131,15 @@ def init_collectors():
     }
 
 def get_cached_analysis(symbol: str):
-    """获取分析结果（使用SQLite共享缓存）"""
+    """获取分析结果（MongoDB共享缓存）"""
     shared_cache = get_shared_cache_stats()
 
     # 先检查共享缓存中是否有数据
     cached_data = shared_cache.get_cached_data(symbol)
     if cached_data is not None:
         shared_cache.record_hit(symbol)
-        # 命中时也更新 analysis_count（累计分析次数）
+        # 命中时只更新 analysis_count，不重复写入完整数据
         shared_cache.set_cached_data(symbol, cached_data)
-        # 返回缓存的dict数据（注意：返回的是字典而非dataclass对象）
         return cached_data
 
     shared_cache.record_miss()
@@ -505,22 +504,11 @@ def display_cache_stats():
         st.metric("缓存未命中", stats['total_misses'])
 
 
-@st.cache_data(ttl=3, show_spinner=False)
-def _get_stats_cached():
-    shared_cache = get_shared_cache_stats()
-    return shared_cache.get_stats()
-
-
-@st.cache_data(ttl=10, show_spinner=False)
-def _get_ranking_cached():
-    shared_cache = get_shared_cache_stats()
-    return shared_cache.get_ranking(limit=20)
-
-
 def display_stock_ranking():
     """显示个股热度榜单（带可视化图表）"""
-    stats = _get_stats_cached()
-    ranking = _get_ranking_cached()
+    shared_cache = get_shared_cache_stats()
+    stats = shared_cache.get_stats()
+    ranking = shared_cache.get_ranking(limit=20)
 
     # 标题行
     col1, col2, col3 = st.columns([2, 1, 1])
