@@ -8,6 +8,7 @@ import sys
 import os
 import pandas as pd
 import threading
+import plotly.express as px
 from pathlib import Path
 import time
 
@@ -527,9 +528,34 @@ def display_stock_ranking():
         df.index = range(1, len(df) + 1)
         df.index.name = "排名"
 
-        # ---- 横向柱状图 ----
-        chart_df = df.head(10).set_index("股票名称")["分析次数"]
-        st.bar_chart(chart_df, horizontal=True, height=280)
+        # ---- Plotly 横向柱状图（按分析次数降序）----
+        top10 = df.head(10).sort_values("分析次数", ascending=True)  # 升序排列，Plotly 渲染出来是从上到下递减
+        fig = px.bar(
+            top10,
+            x="分析次数",
+            y="股票名称",
+            orientation="h",
+            text="分析次数",
+            color="分析次数",
+            color_continuous_scale="Viridis",
+        )
+        fig.update_traces(
+            textposition="outside",
+            textfont_size=13,
+            marker=dict(line=dict(width=0)),
+        )
+        fig.update_layout(
+            height=320,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_title=None,
+            yaxis_title=None,
+            coloraxis_showscale=False,
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(size=12),
+        )
+        fig.update_yaxes(categoryorder="array", categoryarray=top10["股票名称"].tolist())
+        st.plotly_chart(fig, use_container_width=True)
 
         # ---- 榜单表格 ----
         st.dataframe(df, width='stretch', hide_index=False, height=300)
