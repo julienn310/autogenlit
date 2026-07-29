@@ -537,7 +537,7 @@ def display_stock_ranking():
             orientation="h",
             text="分析次数",
             color="分析次数",
-            color_continuous_scale="Blues",
+            color_continuous_scale=[[0, "#dbeafe"], [0.5, "#3b82f6"], [1, "#1e3a8a"]],
         )
         fig.update_traces(
             textposition="outside",
