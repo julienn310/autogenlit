@@ -136,7 +136,8 @@ def get_cached_analysis(symbol: str):
 
     # 先检查共享缓存中是否有数据
     cached_data = shared_cache.get_cached_data(symbol)
-    if cached_data is not None:
+    # 缓存命中但数据不完整（缺risk_metrics/joint_metrics），当作未命中处理
+    if cached_data is not None and cached_data.get('risk_metrics') and cached_data.get('joint_metrics'):
         shared_cache.record_hit(symbol)
         # 命中时只更新 analysis_count，不重复写入完整数据
         shared_cache.set_cached_data(symbol, cached_data)
