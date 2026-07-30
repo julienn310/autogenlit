@@ -632,7 +632,7 @@ def main():
 
                         # ── 卡片HTML（头部+图表+stat tile） ──
                         monthly = flows_data.get(code, {})
-                        months_labels = [m[-2:] for m in recent_months]
+                        months_labels = [f"{m[:4]}年{m[5:]}月" for m in recent_months]
                         values = [monthly.get(m, 0) for m in recent_months]
                         bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
                         max_abs = max(abs(v) for v in values) if values else 1
@@ -675,16 +675,16 @@ def main():
                                 </div>
                                 <div style="text-align:right;">
                                     <div style="font-size:1rem;font-weight:700;color:{pct_color};">{sign}{pct:.2f}%</div>
-                                    <div style="font-size:0.68rem;color:#888;">{'流入' if pct >= 0 else '流出'}</div>
+                                    <div style="font-size:0.68rem;color:#888;">{'资金流入' if pct >= 0 else '资金流出'}</div>
                                 </div>
                             </div>
                             <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">
                                 <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
-                                    <div style="font-size:0.68rem;color:#888;">估算市值</div>
+                                    <div style="font-size:0.68rem;color:#888;">总市值</div>
                                     <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{market_cap:.0f}亿</div>
                                 </div>
                                 <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
-                                    <div style="font-size:0.68rem;color:#888;">估算净值</div>
+                                    <div style="font-size:0.68rem;color:#888;">ETF净值(IOPV)</div>
                                     <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{iopv_str}</div>
                                 </div>
                             </div>
@@ -760,25 +760,18 @@ def main():
             else:
                 st.caption("暂无热度数据")
 
-        # ── 右栏：舆情快讯 ──
+        # ── 右栏：舆情 ──
         with col_sentiment:
-            st.markdown('<div class="section-title">📰 舆情快讯</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">📰 舆情动态</div>', unsafe_allow_html=True)
             with st.spinner("加载舆情..."):
                 try:
                     news_data = fetch_news()
                 except Exception:
                     news_data = {'flash': [], 'timeline': [], 'xueqiu_hot': []}
 
-            flash = news_data.get('flash', [])[:6]
-            xq = news_data.get('xueqiu_hot', [])[:5]
-            tl = news_data.get('timeline', [])[:4]
+            xq = news_data.get('xueqiu_hot', [])[:6]
+            tl = news_data.get('timeline', [])[:6]
 
-            if flash:
-                st.markdown("**⚡ 快讯**", unsafe_allow_html=True)
-                for n in flash:
-                    t = n.get('time', '')[5:] if n.get('time') else ''
-                    short = n.get('title', '')[:22]
-                    st.caption(f"{t} {short}")
             if xq:
                 st.markdown("**🔥 雪球热帖**", unsafe_allow_html=True)
                 for n in xq:
