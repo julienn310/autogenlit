@@ -782,10 +782,18 @@ def main():
                     else:
                         st.markdown(title)
             if tl:
-                st.markdown("**📰 资讯**", unsafe_allow_html=True)
-                for n in tl:
-                    t = n.get('time', '')[5:] if n.get('time') else ''
-                    st.caption(f"{t} {n.get('title', '')[:25]}")
+                with st.expander("📰 资讯简报", expanded=False):
+                    for n in tl:
+                        t = n.get('time', '')[5:] if n.get('time') else ''
+                        src = n.get('source', '未知')
+                        title = n.get('title', '')
+                        url = n.get('url', '')
+                        if url:
+                            st.markdown(f"**{t}** {title}")
+                            st.markdown(f"[查看详情 →]({url})  | 来源: {src}")
+                        else:
+                            st.markdown(f"**{t}** {title}  | 来源: {src}")
+                        st.divider()
 
         st.divider()
 
