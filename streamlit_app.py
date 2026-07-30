@@ -594,59 +594,91 @@ def main():
         # ========== ETF 基金流向监控 ==========
         st.markdown('<div class="section-title">💰 ETF基金资金流向监控</div>', unsafe_allow_html=True)
 
-        with st.spinner("📊 正在加载ETF数据..."):
-            try:
-                from src.data.market_collector import fetch_etf_data
-                etf_list = fetch_etf_data()
-            except Exception:
-                etf_list = []
+        col_etf_spot, col_etf_flow = st.columns([1, 2])
 
-        if etf_list:
-            # 用 Plotly 横向柱状图展示 ETF 涨跌幅
-            etf_df = pd.DataFrame(etf_list)
-            etf_df = etf_df.sort_values('change_pct', ascending=True)
-            etf_df['涨跌'] = etf_df['change_pct'].apply(lambda x: f"{'+' if x >= 0 else ''}{x:.2f}%")
-            # 成交额转亿
-            etf_df['成交额亿'] = etf_df['amount'].apply(lambda x: f"{x/10000:.1f}亿" if x else "-")
+        with col_etf_spot:
+            st.markdown("**📊 今日涨跌**", unsafe_allow_html=True)
+            with st.spinner("加载ETF行情..."):
+                try:
+                    from src.data.market_collector import fetch_etf_data
+                    etf_list = fetch_etf_data()
+                except Exception:
+                    etf_list = []
 
-            fig_etf = px.bar(
-                etf_df,
-                x='change_pct',
-                y='name',
-                orientation='h',
-                text='涨跌',
-                color='change_pct',
-                color_continuous_scale=['#1F4E79', '#6c9bd1', '#b4d2e7', '#f5f5f5', '#f0a6a6', '#d64545', '#c00'],
-                range_color=[-3, 3],
-            )
-            fig_etf.update_traces(textposition='outside', textfont_size=12, marker=dict(line=dict(width=0)))
-            fig_etf.update_layout(
-                height=220,
-                margin=dict(l=10, r=60, t=5, b=5),
-                xaxis_title=None, yaxis_title=None,
-                coloraxis_showscale=False,
-                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(size=11),
-            )
-            fig_etf.update_xaxes(range=[-4, 4])
-            st.plotly_chart(fig_etf, use_container_width=True)
-
-            # ETF 详情卡片（成交额 + 估算流向）
-            etf_cards = st.columns(min(len(etf_list), 8))
-            for idx, (_, row) in enumerate(etf_df.head(8).iterrows()):
-                with etf_cards[idx]:
+            if etf_list:
+                etf_df = pd.DataFrame(etf_list)
+                etf_df = etf_df.sort_values('change_pct', ascending=False)
+                for _, row in etf_df.iterrows():
                     pct = row['change_pct']
-                    color = '#dc3545' if pct >= 0 else '#1F4E79'
+                    color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
                     sign = '+' if pct >= 0 else ''
                     st.markdown(f"""
-                    <div style="background:white;border-radius:8px;padding:10px 8px;margin:4px 0;border-left:3px solid {color};">
-                        <div style="font-weight:600;font-size:0.82rem;color:#333;">{row['name']}</div>
-                        <div style="font-size:1.1rem;font-weight:700;color:{color};">{sign}{pct:.2f}%</div>
-                        <div style="font-size:0.72rem;color:#888;margin-top:3px;">{row.get('成交额亿','-')}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            st.info("ETF 数据暂时不可用")
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #eee;">
+                        <span style="font-size:0.8rem;min-width:90px;">{row['name']}</span>
+                        <span style="color:{color};font-weight:700;font-size:0.85rem;">{sign}{pct:.2f}%</span>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.caption("暂无数据")
+
+        with col_etf_flow:
+            st.markdown("**📈 近一年月度净流入（亿元）**", unsafe_allow_html=True)
+            with st.spinner("加载月度资金流..."):
+                try:
+                    from src.data.market_collector import fetch_etf_monthly_flows
+                    flows_data = fetch_etf_monthly_flows()
+                except Exception:
+                    flows_data = {}
+
+            if flows_data:
+                # 构建 Plotly 分组柱状图：每只ETF一根柱子/月
+                import plotly.graph_objects as go
+
+                # 收集所有月份（排序）
+                all_months = sorted(set(
+                    m for months in flows_data.values() for m in months
+                ))
+                # 过滤近12个月
+                recent = [m for m in all_months if m >= all_months[-13]] if len(all_months) > 12 else all_months
+                if len(recent) < 6:
+                    recent = all_months[-12:] if len(all_months) > 12 else all_months
+
+                # ETF中文名映射
+                etf_names = {
+                    'sh510300': '沪深300ETF', 'sh510500': '中证500ETF',
+                    'sz159915': '创业板ETF', 'sh510050': '上证50ETF',
+                    'sh512880': '证券ETF', 'sh512760': '芯片ETF',
+                    'sh512690': '酒ETF', 'sz159919': '沪深300(深)',
+                    'sh515000': '科技ETF',
+                }
+                fig = go.Figure()
+                for code, monthly in flows_data.items():
+                    name = etf_names.get(code, code)
+                    values = [monthly.get(m, 0) for m in recent]
+                    bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
+                    fig.add_trace(go.Bar(
+                        x=recent,
+                        y=values,
+                        name=name,
+                        marker_color=bar_colors,
+                        text=[f"{v:+.1f}" if abs(v) >= 1 else f"{v:+.2f}" for v in values],
+                        textposition='outside',
+                        textfont_size=9,
+                    ))
+
+                fig.update_layout(
+                    barmode='group',
+                    height=260,
+                    margin=dict(l=10, r=10, t=5, b=40),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(size=10),
+                    legend=dict(orientation="h", y=-0.25, font=dict(size=9)),
+                    xaxis=dict(tickangle=-30),
+                    yaxis=dict(title=None, zeroline=True, zerolinecolor='#ccc'),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.caption("月度数据暂时不可用")
 
         st.divider()
 

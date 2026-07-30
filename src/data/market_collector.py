@@ -4,6 +4,7 @@
 
 import requests
 import logging
+import json
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -220,6 +221,78 @@ def fetch_etf_data() -> List[Dict]:
                     })
                 except Exception:
                     continue
+        except Exception:
+            continue
+
+    return results
+
+
+def fetch_etf_monthly_flows() -> Dict[str, Dict[str, float]]:
+    """
+    获取主要ETF近一年每月净流入/流出数据
+    资金流向估算：日净流入 ≈ (收盘价-开盘价)×成交量，再按月汇总
+    返回: {etf_code: {month_str: flow_billion_yuan}}
+    """
+    import pandas as pd
+    import datetime
+    session = requests.Session()
+    session.trust_env = False
+
+    # ETF 列表：(腾讯代码, 中文名)
+    etf_list = [
+        ('sh510300', '沪深300ETF'),
+        ('sh510500', '中证500ETF'),
+        ('sz159915', '创业板ETF'),
+        ('sh510050', '上证50ETF'),
+        ('sh512880', '证券ETF'),
+        ('sh512760', '芯片ETF'),
+        ('sh512690', '酒ETF'),
+        ('sz159919', '沪深300ETF(深)'),
+        ('sh515000', '科技ETF'),
+    ]
+
+    results = {}  # {etf_code: {month: flow_billion}}
+
+    # 腾讯K线接口，每次最多320条日K（约1.3年）
+    url_tpl = 'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get?_var=kline_dayqfq&param={code},day,,,320,qfq'
+    for code, name in etf_list:
+        try:
+            r = session.get(url_tpl.format(code=code), timeout=15)
+            text = r.text
+            if text.startswith('kline_dayqfq='):
+                text = text[len('kline_dayqfq='):]
+            data = json.loads(text)
+            qfqday = data.get('data', {}).get(code, {}).get('qfqday', [])
+            if not qfqday:
+                qfqday = data.get('data', {}).get(code, {}).get('day', [])
+
+            records = []
+            for item in qfqday:
+                if len(item) < 9:
+                    continue
+                try:
+                    date = item[0]            # YYYY-MM-DD
+                    open_p = float(item[1])  # 前复权开盘价（元）
+                    close_p = float(item[2])  # 前复权收盘价（元）
+                    # amt=成交额(万元), vol=成交量(万股)
+                    # 均价(元) ≈ amt/vol × 100
+                    amt = float(item[8])   # 成交额，万元
+                    vol = float(item[5])   # 成交量，万股
+                    # 日净流入(亿元) = 成交额(万元) × 涨跌幅 / 100 / 10000
+                    # 涨跌幅 = (收盘-开盘)/收盘
+                    if close_p > 0 and amt > 0:
+                        pct_chg = (close_p - open_p) / close_p  # 比例
+                        flow_yi = amt * pct_chg / 100   # 万元 -> 亿元
+                        month = date[:7]  # YYYY-MM
+                        records.append({'month': month, 'flow': flow_yi})
+                except Exception:
+                    continue
+
+            if records:
+                df = pd.DataFrame(records)
+                monthly = df.groupby('month')['flow'].sum().to_dict()
+                results[code] = monthly
+
         except Exception:
             continue
 
