@@ -22,6 +22,7 @@ INDICES_TENCENT = {
     'sh000688': '科创50',
     # 全球指数
     'hkHSI': '恒生指数',
+    'hkHSCEI': '恒生科技',
     'usIXIC': '纳斯达克综合',
     'usDJI': '道琼斯工业',
     'usINX': '标普500',

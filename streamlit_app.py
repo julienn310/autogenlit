@@ -769,18 +769,7 @@ def main():
                 except Exception:
                     news_data = {'flash': [], 'timeline': [], 'xueqiu_hot': []}
 
-            xq = news_data.get('xueqiu_hot', [])[:5]
             tl = news_data.get('timeline', [])[:10]
-
-            if xq:
-                st.markdown("**🔥 雪球热帖**", unsafe_allow_html=True)
-                for n in xq:
-                    title = n.get('title', '')[:25]
-                    url = n.get('url', '')
-                    if url:
-                        st.markdown(f"[{title}]({url})")
-                    else:
-                        st.markdown(title)
 
             if tl:
                 st.markdown("**📰 最新资讯**", unsafe_allow_html=True)
