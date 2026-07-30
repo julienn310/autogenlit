@@ -201,11 +201,15 @@ def fetch_etf_data() -> List[Dict]:
                         amount = float(parts[37]) if len(parts) > 37 and parts[37] not in ('', '-') else 0.0
                     except (ValueError, TypeError):
                         amount = 0.0
-
-                    # 估算资金流向：涨为流入，跌为流出
-                    flow_direction = 'in' if change_pct >= 0 else 'out'
-                    flow_color = '#dc3545' if change_pct >= 0 else '#1F4E79'
-                    flow_icon = '↑资金流入' if change_pct >= 0 else '↓资金流出'
+                    try:
+                        # [44]=估算市值(亿元), [78]=估算净值(IOPV), [72]=总市值(元)
+                        market_cap_yi = float(parts[44]) if len(parts) > 44 and parts[44] not in ('', '-') else 0.0
+                        iopv = float(parts[78]) if len(parts) > 78 and parts[78] not in ('', '-') else 0.0
+                        total_market_cap = float(parts[72]) if len(parts) > 72 and parts[72] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        market_cap_yi = 0.0
+                        iopv = 0.0
+                        total_market_cap = 0.0
 
                     results.append({
                         'name': name,
@@ -213,10 +217,10 @@ def fetch_etf_data() -> List[Dict]:
                         'price': price,
                         'prev_close': prev_close,
                         'change_pct': change_pct,
-                        'amount': amount,  # 成交额（万元）
-                        'flow_direction': flow_direction,
-                        'flow_color': flow_color,
-                        'flow_icon': flow_icon,
+                        'amount': amount,       # 成交额（万元）
+                        'market_cap_yi': market_cap_yi,   # 估算市值（亿元）
+                        'iopv': iopv,           # 估算净值 IOPV（元）
+                        'total_market_cap': total_market_cap,  # 总市值（元）
                         'source': 'tencent',
                     })
                 except Exception:

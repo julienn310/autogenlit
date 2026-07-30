@@ -9,7 +9,6 @@ import os
 import pandas as pd
 import threading
 import plotly.express as px
-import plotly.graph_objects as go
 from pathlib import Path
 import time
 
@@ -595,7 +594,7 @@ def main():
         # ========== ETF 基金流向监控 ==========
         st.markdown('<div class="section-title">💰 ETF基金资金流向监控</div>', unsafe_allow_html=True)
 
-        with st.spinner("加载ETF数据..."):
+        with st.spinner("📊 正在加载ETF数据..."):
             try:
                 from src.data.market_collector import fetch_etf_data, fetch_etf_monthly_flows
                 etf_list = fetch_etf_data()
@@ -604,105 +603,95 @@ def main():
                 etf_list = []
                 flows_data = {}
 
-        # 今日涨跌 + 市值 + 近两月净流入对比
+        import plotly.graph_objects as go
+
+        # 收集近12个月月份
+        all_months = sorted(set(
+            m for months in flows_data.values() for m in months
+        ), reverse=True)
+        recent_months = all_months[:12]
+
         if etf_list:
-            etf_spot_df = pd.DataFrame(etf_list)
-            etf_names_map = {
-                'sh510300': '沪深300ETF', 'sh510500': '中证500ETF',
-                'sz159915': '创业板ETF', 'sh510050': '上证50ETF',
-                'sh512880': '证券ETF', 'sh512760': '芯片ETF',
-                'sh512690': '酒ETF', 'sz159919': '沪深300(深)', 'sh515000': '科技ETF',
-            }
-
-            # 近两月净流入
-            latest_months = sorted(set(m for d in flows_data.values() for m in d.keys()))
-            m1 = latest_months[-1] if len(latest_months) >= 1 else None
-            m2 = latest_months[-2] if len(latest_months) >= 2 else None
-
+            # 每行3张卡片，外层不嵌套 st.columns()
             rows = []
-            for _, row in etf_spot_df.iterrows():
-                code = row.get('code', '')
-                pct = row['change_pct']
-                amount_wan = row.get('amount', 0)  # 万元
-                # 最新收盘价估算（从amount和volume推算均价）
-                vol_wan = row.get('volume', 0)  # 万股
-                avg_price = amount_wan / vol_wan if vol_wan else 0
-                # 估算规模 = 均价 × 份额（亿份），用 amount/price * 10000/1e8
-                # 但更直接：用成交额/换手率估算...这里用 amount(万元) 作为日均成交参考
-                # 市值估算 = avg_price × 份额（亿份），shares ≈ amount/avg_price/10000
-                shares_yi = (amount_wan / avg_price / 10000) if avg_price > 0 else 0
-                m1_flow = flows_data.get(code, {}).get(m1, None)
-                m2_flow = flows_data.get(code, {}).get(m2, None)
-                rows.append({
-                    'ETF': etf_names_map.get(code, row.get('name', code)),
-                    '代码': code,
-                    '涨跌%': pct,
-                    '最新价': avg_price,
-                    '估算规模(亿)': shares_yi,
-                    f'{m1}净流入' if m1 else '最新月净流入': m1_flow,
-                    f'{m2}净流入' if m2 else '上月净流入': m2_flow,
-                })
+            for i in range(0, len(etf_list), 3):
+                rows.append(etf_list[i:i+3])
 
-            spot_df = pd.DataFrame(rows)
+            for row_etfs in rows:
+                cols = st.columns(3)
+                for ci, row_etf in enumerate(row_etfs):
+                    with cols[ci]:
+                        code = row_etf['code']
+                        name = row_etf['name']
+                        price = row_etf['price']
+                        pct = row_etf['change_pct']
+                        sign = '+' if pct >= 0 else ''
+                        pct_color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
+                        market_cap = row_etf.get('market_cap_yi', 0) or 0
+                        iopv = row_etf.get('iopv', 0) or 0
 
-            # 用热力图展示月度资金流（近12月 × ETF）
-            if flows_data:
-                all_months = sorted(set(m for d in flows_data.values() for m in d))
-                recent = all_months[-12:] if len(all_months) > 12 else all_months
-                etf_codes = list(flows_data.keys())
+                        # ── 卡片HTML（头部+图表+stat tile） ──
+                        monthly = flows_data.get(code, {})
+                        months_labels = [m[-2:] for m in recent_months]
+                        values = [monthly.get(m, 0) for m in recent_months]
+                        bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
+                        max_abs = max(abs(v) for v in values) if values else 1
 
-                # 构建热力图矩阵
-                z_data = []
-                for code in etf_codes:
-                    z_data.append([flows_data[code].get(m, 0) for m in recent])
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=months_labels,
+                            y=values,
+                            marker_color=bar_colors,
+                            text=[f"{v:+.0f}" if abs(v) >= 10 else f"{v:+.1f}" for v in values],
+                            textposition='outside',
+                            textfont_size=8,
+                            hovertemplate="%{x}<br>净流入: %{y:+.1f}亿<extra></extra>",
+                        ))
+                        fig.update_layout(
+                            height=155,
+                            margin=dict(l=4, r=4, t=4, b=4),
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(size=9),
+                            showlegend=False,
+                            xaxis=dict(tickangle=-30, showgrid=False, zeroline=False, tickfont=dict(size=8)),
+                            yaxis=dict(
+                                title=None, showgrid=True, gridcolor='#f0f0f0',
+                                zeroline=True, zerolinecolor='#ccc',
+                                range=[-max_abs * 1.3, max_abs * 1.3],
+                                tickfont=dict(size=7),
+                            ),
+                        )
 
-                x_labels = [m[-2:] for m in recent]  # 只显示月 MM
-                y_labels = [etf_names_map.get(c, c) for c in etf_codes]
+                        iopv_str = f"{iopv:.3f}" if iopv else "—"
 
-                fig_heat = go.Figure(go.Heatmap(
-                    z=z_data,
-                    x=x_labels,
-                    y=y_labels,
-                    colorscale=[
-                        [0, '#1F4E79'],      # 深红（流出）
-                        [0.5, '#f5f5f5'],    # 白（零）
-                        [1, '#dc3545'],      # 深红（流入）
-                    ],
-                    zmid=0,
-                    text=[[f"{v:+.0f}" for v in row] for row in z_data],
-                    texttemplate="%{text}",
-                    textfont=dict(size=9, color='white'),
-                    hovertemplate='%{y} %{x}月: %{z:+.1f}亿<extra></extra>',
-                    colorbar=dict(title="净流入(亿)", tickformat="+.0f"),
-                ))
-                fig_heat.update_layout(
-                    height=max(280, 30 * len(etf_codes)),
-                    margin=dict(l=10, r=10, t=5, b=5),
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font=dict(size=10),
-                    xaxis=dict(title="月份", tickangle=-30, side='bottom'),
-                    yaxis=dict(title=None, ticksuffix="  "),
-                )
-                st.plotly_chart(fig_heat, use_container_width=True)
-
-            # ETF 详情表格：涨跌 + 市值 + 近两月净流入
-            display_df = spot_df.copy()
-            display_df['估算规模(亿)'] = display_df['估算规模(亿)'].apply(
-                lambda x: f"{x:.0f}亿" if x > 0 else "-"
-            )
-            for col in ['涨跌%', f'{m1}净流入' if m1 else '最新月净流入', f'{m2}净流入' if m2 else '上月净流入']:
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].apply(
-                        lambda x: f"{x:+.2f}亿" if x is not None else "-"
-                    )
-            display_df['最新价'] = display_df['最新价'].apply(lambda x: f"¥{x:.3f}" if x > 0 else "-")
-            display_df = display_df[['ETF', '涨跌%', '最新价', '估算规模(亿)',
-                                     f'{m1}净流入' if m1 else '最新月净流入',
-                                     f'{m2}净流入' if m2 else '上月净流入']]
-            st.dataframe(display_df, width='stretch', hide_index=True, height=200)
-        else:
-            st.info("ETF 数据暂时不可用")
+                        # 用HTML卡片包裹：头部 + Plotly图 + 两个stat tile
+                        card_html = f"""
+                        <div style="background:white;border-radius:10px;padding:12px 12px 8px;margin:4px 0;box-shadow:0 1px 6px rgba(0,0,0,0.08);border-top:3px solid {pct_color};">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+                                <div>
+                                    <div style="font-weight:700;font-size:0.88rem;color:#1a1a2e;">{name}</div>
+                                    <div style="font-size:1.4rem;font-weight:700;color:#1a1a2e;line-height:1.1;">{price:.3f}</div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-size:1rem;font-weight:700;color:{pct_color};">{sign}{pct:.2f}%</div>
+                                    <div style="font-size:0.68rem;color:#888;">{'流入' if pct >= 0 else '流出'}</div>
+                                </div>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">
+                                <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
+                                    <div style="font-size:0.68rem;color:#888;">估算市值</div>
+                                    <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{market_cap:.0f}亿</div>
+                                </div>
+                                <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
+                                    <div style="font-size:0.68rem;color:#888;">估算净值</div>
+                                    <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{iopv_str}</div>
+                                </div>
+                            </div>
+                        </div>
+                        """
+                        st.markdown(card_html, unsafe_allow_html=True)
+                        st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
