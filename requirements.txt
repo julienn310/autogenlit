@@ -17,6 +17,7 @@ websockets>=10.0
 
 # Streamlit Web UI
 streamlit>=1.28.0
+plotly>=5.18.0
 
 # PDF处理依赖
 pdfplumber>=0.10.0
