@@ -22,18 +22,13 @@ INDICES_TENCENT = {
     'sh000688': '科创50',
     # 全球指数
     'hkHSI': '恒生指数',
-    'hkHSCEI': '恒生科技',
+    'hkHSCEI': '恒生国企',
+    'hkHSTECH': '恒生科技',
     'usIXIC': '纳斯达克综合',
+    'usNDX': '纳斯达克100',
     'usDJI': '道琼斯工业',
     'usINX': '标普500',
-    'jpNKY': '日经225',
-    'krKOSPI': '韩国综合',
-    'sgSTI': '新加坡海峡时报',
-    'ukFTSE': '英国富时100',
-    'deDAX': '德国DAX',
-    'frCAC': '法国CAC40',
-    'auAS51': '澳大利亚标普200',
-    'inNIFTY': '印度NIFTY50',
+    'usVIX': 'VIX恐慌指数',
 }
 
 # 腾讯行情字段索引
@@ -107,24 +102,18 @@ def fetch_major_indices() -> List[Dict]:
     results = []
     codes = list(INDICES_TENCENT.keys())
 
-    # 分批请求（腾讯接口每次最多约20个）
-    batch_size = 15
-    for i in range(0, len(codes), batch_size):
-        batch = codes[i:i + batch_size]
-        query = ','.join(batch)
-        url = f'https://qt.gtimg.cn/q={query}'
-
-        try:
-            r = session.get(url, timeout=10)
-            r.encoding = 'gbk'
-
-            for code in batch:
-                data = _parse_tencent_response(r.text, code)
-                if data:
-                    results.append(data)
-        except Exception as e:
-            logger.warning(f"批次获取失败 {batch[0]}: {e}")
-            continue
+    # 一次请求所有指数（腾讯接口支持批量查询）
+    query = ','.join(codes)
+    url = f'https://qt.gtimg.cn/q={query}'
+    try:
+        r = session.get(url, timeout=10)
+        r.encoding = 'gbk'
+        for code in codes:
+            data = _parse_tencent_response(r.text, code)
+            if data:
+                results.append(data)
+    except Exception as e:
+        logger.warning(f"获取指数失败: {e}")
 
     return results
 
