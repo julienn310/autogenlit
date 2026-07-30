@@ -4,6 +4,7 @@
 
 import requests
 import logging
+import json
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -19,19 +20,12 @@ INDICES_TENCENT = {
     'sh000016': '上证50',
     'sh000905': '中证500',
     'sh000688': '科创50',
-    # 全球指数
+    # 全球指数（腾讯API不稳定，日韩英德法澳印时常失败，以实际能获取的为准）
     'hkHSI': '恒生指数',
+    'hkHSCEI': '恒生科技',
     'usIXIC': '纳斯达克综合',
     'usDJI': '道琼斯工业',
     'usINX': '标普500',
-    'jpNKY': '日经225',
-    'krKOSPI': '韩国综合',
-    'sgSTI': '新加坡海峡时报',
-    'ukFTSE': '英国富时100',
-    'deDAX': '德国DAX',
-    'frCAC': '法国CAC40',
-    'auAS51': '澳大利亚标普200',
-    'inNIFTY': '印度NIFTY50',
 }
 
 # 腾讯行情字段索引
@@ -122,6 +116,264 @@ def fetch_major_indices() -> List[Dict]:
                     results.append(data)
         except Exception as e:
             logger.warning(f"批次获取失败 {batch[0]}: {e}")
+            continue
+
+    # 补充新浪全球指数（日经、英国富时；美股用腾讯已有数据，不再重复添加）
+    try:
+        sina_results = fetch_sina_global_indices()
+        # 只保留日经和英国富时（Sina有，美股用腾讯的避免重复）
+        sina_keep = {'int_nikkei', 'int_ftse'}
+        results.extend([s for s in sina_results if s['code'] in sina_keep])
+    except Exception:
+        pass
+
+    return results
+
+
+# 新浪全球指数（补充腾讯覆盖不到的日经、英国富时）
+SINA_GLOBAL_CODES = {
+    'int_nikkei': '日经225',
+    'int_ftse': '英国富时100',
+    'int_nasdaq': '纳斯达克综合',
+    'int_dji': '道琼斯工业',
+    'int_sp500': '标普500',
+}
+
+
+def fetch_sina_global_indices() -> List[Dict]:
+    """
+    通过新浪财经接口获取全球指数（腾讯覆盖不到的补充）
+    格式: int_nikkei, int_ftse, int_nasdaq, int_dji, int_sp500
+    返回: [{name, code, price, change, change_pct}, ...]
+    """
+    session = requests.Session()
+    session.trust_env = False
+    headers = {'Referer': 'https://finance.sina.com.cn'}
+
+    codes_str = ','.join(SINA_GLOBAL_CODES.keys())
+    url = f'https://hq.sinajs.cn/list={codes_str}'
+
+    try:
+        r = session.get(url, headers=headers, timeout=10)
+        r.encoding = 'gbk'
+        results = []
+
+        for line in r.text.strip().split('\n'):
+            try:
+                raw = line.split('=')
+                if len(raw) < 2:
+                    continue
+                key = raw[0].replace('var hq_str_', '').strip()
+                if key not in SINA_GLOBAL_CODES:
+                    continue
+                val = raw[1].strip('";\n')
+                if not val:
+                    continue
+                fields = val.split(',')
+                if len(fields) < 4 or not fields[1]:
+                    continue
+
+                name = fields[0]
+                try:
+                    price = float(fields[1])
+                except (ValueError, TypeError):
+                    price = 0.0
+                try:
+                    change_pct = float(fields[3])
+                except (ValueError, TypeError):
+                    change_pct = 0.0
+
+                results.append({
+                    'name': name,
+                    'code': key,
+                    'price': price,
+                    'change': 0.0,
+                    'change_pct': change_pct,
+                    'source': 'sina',
+                })
+            except Exception:
+                continue
+
+        return results
+    except Exception:
+        return []
+
+
+# 主要ETF列表（宽基 + 热门行业）
+ETF_CODES = {
+    'sh510300': '沪深300ETF',
+    'sh510500': '中证500ETF',
+    'sz159915': '创业板ETF',
+    'sh510050': '上证50ETF',
+    'sh512880': '证券ETF',
+    'sh512760': '芯片ETF',
+    'sh512690': '酒ETF',
+    'sh515000': '科技ETF',
+    'sh512010': '医药ETF',
+    'sh512660': '军工ETF',
+    'sh510880': '红利ETF华泰柏瑞',
+    'sz159998': '农业ETF平安',
+}
+
+
+def fetch_etf_data() -> List[Dict]:
+    """
+    获取主要ETF实时行情（价格、涨跌幅、估算资金流向）
+    资金流向估算：基于价格涨跌方向 + 成交量变化
+    """
+    session = requests.Session()
+    session.trust_env = False
+
+    results = []
+    codes = list(ETF_CODES.keys())
+
+    # 腾讯行情字段索引（ETF格式）
+    # v_sh510300="1~名称~代码~当前价~昨日收盘~今日开盘~成交量~成交额~~..."
+    # ETF字段：parts[3]=当前价, parts[4]=昨日收盘, parts[31]=涨跌额, parts[32]=涨跌幅%
+    TQ_FIELDS_ETF = ['unused', 'name', 'code', 'price', 'prev_close', 'open',
+                     'volume', 'amount', 'unused2', 'bid', 'ask',
+                     'change', 'change_pct']
+
+    batch_size = 10
+    for i in range(0, len(codes), batch_size):
+        batch = codes[i:i + batch_size]
+        query = ','.join(batch)
+        url = f'https://qt.gtimg.cn/q={query}'
+
+        try:
+            r = session.get(url, timeout=10)
+            r.encoding = 'gbk'
+
+            for code in batch:
+                try:
+                    prefix = f'v_{code}="'
+                    idx = r.text.find(prefix)
+                    if idx < 0:
+                        continue
+                    start = idx + len(prefix)
+                    end = r.text.find('"', start)
+                    raw = r.text[start:end]
+                    parts = raw.split('~')
+                    if len(parts) < 33:
+                        continue
+
+                    name = parts[1]
+                    try:
+                        price = float(parts[3]) if parts[3] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        price = 0.0
+                    try:
+                        prev_close = float(parts[4]) if parts[4] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        prev_close = 0.0
+                    try:
+                        change_pct = float(parts[32]) if parts[32] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        change_pct = 0.0
+                    try:
+                        amount = float(parts[37]) if len(parts) > 37 and parts[37] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        amount = 0.0
+                    try:
+                        # [44]=估算市值(亿元), [78]=估算净值(IOPV), [72]=总市值(元)
+                        market_cap_yi = float(parts[44]) if len(parts) > 44 and parts[44] not in ('', '-') else 0.0
+                        iopv = float(parts[78]) if len(parts) > 78 and parts[78] not in ('', '-') else 0.0
+                        total_market_cap = float(parts[72]) if len(parts) > 72 and parts[72] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        market_cap_yi = 0.0
+                        iopv = 0.0
+                        total_market_cap = 0.0
+
+                    results.append({
+                        'name': name,
+                        'code': code,
+                        'price': price,
+                        'prev_close': prev_close,
+                        'change_pct': change_pct,
+                        'amount': amount,       # 成交额（万元）
+                        'market_cap_yi': market_cap_yi,   # 估算市值（亿元）
+                        'iopv': iopv,           # 估算净值 IOPV（元）
+                        'total_market_cap': total_market_cap,  # 总市值（元）
+                        'source': 'tencent',
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    return results
+
+
+def fetch_etf_monthly_flows() -> Dict[str, Dict[str, float]]:
+    """
+    获取主要ETF近一年每月净流入/流出数据
+    资金流向估算：日净流入 ≈ (收盘价-开盘价)×成交量，再按月汇总
+    返回: {etf_code: {month_str: flow_billion_yuan}}
+    """
+    import pandas as pd
+    import datetime
+    session = requests.Session()
+    session.trust_env = False
+
+    # ETF 列表：(腾讯代码, 中文名)
+    etf_list = [
+        ('sh510300', '沪深300ETF'),
+        ('sh510500', '中证500ETF'),
+        ('sz159915', '创业板ETF'),
+        ('sh510050', '上证50ETF'),
+        ('sh512880', '证券ETF'),
+        ('sh512760', '芯片ETF'),
+        ('sh512690', '酒ETF'),
+        ('sh515000', '科技ETF'),
+        ('sh512010', '医药ETF'),
+        ('sh512660', '军工ETF'),
+        ('sh510880', '红利ETF华泰柏瑞'),
+        ('sz159998', '农业ETF平安'),
+    ]
+
+    results = {}  # {etf_code: {month: flow_billion}}
+
+    # 腾讯K线接口，每次最多320条日K（约1.3年）
+    url_tpl = 'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get?_var=kline_dayqfq&param={code},day,,,320,qfq'
+    for code, name in etf_list:
+        try:
+            r = session.get(url_tpl.format(code=code), timeout=15)
+            text = r.text
+            if text.startswith('kline_dayqfq='):
+                text = text[len('kline_dayqfq='):]
+            data = json.loads(text)
+            qfqday = data.get('data', {}).get(code, {}).get('qfqday', [])
+            if not qfqday:
+                qfqday = data.get('data', {}).get(code, {}).get('day', [])
+
+            records = []
+            for item in qfqday:
+                if len(item) < 9:
+                    continue
+                try:
+                    date = item[0]            # YYYY-MM-DD
+                    open_p = float(item[1])  # 前复权开盘价（元）
+                    close_p = float(item[2])  # 前复权收盘价（元）
+                    # amt=成交额(万元), vol=成交量(万股)
+                    # 均价(元) ≈ amt/vol × 100
+                    amt = float(item[8])   # 成交额，万元
+                    vol = float(item[5])   # 成交量，万股
+                    # 日净流入(亿元) = 成交额(万元) × 涨跌幅 / 100 / 10000
+                    # 涨跌幅 = (收盘-开盘)/收盘
+                    if close_p > 0 and amt > 0:
+                        pct_chg = (close_p - open_p) / close_p  # 比例
+                        flow_yi = amt * pct_chg / 100   # 万元 -> 亿元
+                        month = date[:7]  # YYYY-MM
+                        records.append({'month': month, 'flow': flow_yi})
+                except Exception:
+                    continue
+
+            if records:
+                df = pd.DataFrame(records)
+                monthly = df.groupby('month')['flow'].sum().to_dict()
+                results[code] = monthly
+
+        except Exception:
             continue
 
     return results

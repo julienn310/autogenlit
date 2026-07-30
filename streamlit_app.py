@@ -8,6 +8,7 @@ import sys
 import os
 import pandas as pd
 import threading
+import plotly.express as px
 from pathlib import Path
 import time
 
@@ -527,9 +528,34 @@ def display_stock_ranking():
         df.index = range(1, len(df) + 1)
         df.index.name = "排名"
 
-        # ---- 横向柱状图 ----
-        chart_df = df.head(10).set_index("股票名称")["分析次数"]
-        st.bar_chart(chart_df, horizontal=True, height=280)
+        # ---- Plotly 横向柱状图（按分析次数降序）----
+        top10 = df.head(10).sort_values("分析次数", ascending=True)  # 升序排列，Plotly 渲染出来是从上到下递减
+        fig = px.bar(
+            top10,
+            x="分析次数",
+            y="股票名称",
+            orientation="h",
+            text="分析次数",
+            color="分析次数",
+            color_continuous_scale="Blues",
+        )
+        fig.update_traces(
+            textposition="outside",
+            textfont_size=13,
+            marker=dict(line=dict(width=0)),
+        )
+        fig.update_layout(
+            height=320,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_title=None,
+            yaxis_title=None,
+            coloraxis_showscale=False,
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(size=12),
+        )
+        fig.update_yaxes(categoryorder="array", categoryarray=top10["股票名称"].tolist())
+        st.plotly_chart(fig, use_container_width=True)
 
         # ---- 榜单表格 ----
         st.dataframe(df, width='stretch', hide_index=False, height=300)
@@ -551,10 +577,11 @@ def main():
 
     # ==================== 仪表板 ====================
     if page == "仪表板":
+        # ── 紧凑标题行 ──
         st.markdown("""
-        <div class="main-header">
-            <h1>A股智能体分析系统</h1>
-            <p>基于 AutoGen 多智能体协作的金融分析平台</p>
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">📈 A股智能体分析系统</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">基于 AutoGen 多智能体协作的金融分析平台</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -564,161 +591,209 @@ def main():
         with col3: st.metric("智能体数量", "4", "协作分析")
         with col4: st.metric("PDF分析", "支持", "年报风险识别")
 
-        # ========== 个股热度榜 ==========
-        st.divider()
-        display_stock_ranking()
-        st.divider()
+        # ========== ETF 基金流向监控 ==========
+        st.markdown('<div class="section-title">💰 ETF基金资金流向监控</div>', unsafe_allow_html=True)
 
-        # ========== 全球市场行情 ==========
-        st.markdown('<div class="section-title">🌏 全球市场行情</div>', unsafe_allow_html=True)
-
-        with st.spinner("🌐 正在加载全球指数，请稍候..."):
+        with st.spinner("📊 正在加载ETF数据..."):
             try:
-                indices = fetch_major_indices()
+                from src.data.market_collector import fetch_etf_data, fetch_etf_monthly_flows
+                etf_list = fetch_etf_data()
+                flows_data = fetch_etf_monthly_flows()
             except Exception:
-                indices = []
+                etf_list = []
+                flows_data = {}
 
-        if indices:
-            # 按涨跌幅排序
-            indices_sorted = sorted(indices, key=lambda x: x['change_pct'], reverse=True)
+        import plotly.graph_objects as go
 
-            # A股 / 全球分区
-            A_STOCK_CODES = {'sh000001', 'sz399001', 'sz399006', 'sh000300', 'sh000016', 'sh000905', 'sh000688'}
-            a_stocks = [i for i in indices_sorted if i['code'] in A_STOCK_CODES]
-            global_stocks = [i for i in indices_sorted if i['code'] not in A_STOCK_CODES]
+        # 收集近12个月月份
+        all_months = sorted(set(
+            m for months in flows_data.values() for m in months
+        ), reverse=True)
+        recent_months = all_months[:12]
 
-            def render_index_row(d):
-                pct = d['change_pct']
-                color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
-                sign = '+' if pct >= 0 else ''
-                return f"""
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #eee;">
-                    <span style="font-weight:600;min-width:100px;">{d['name']}</span>
-                    <span style="color:{color};font-weight:700;">{sign}{pct:.2f}%</span>
-                    <span style="color:#666;font-size:0.9em;">{d['price']:.2f}</span>
-                </div>"""
+        if etf_list:
+            # 每行3张卡片，外层不嵌套 st.columns()
+            rows = []
+            for i in range(0, len(etf_list), 3):
+                rows.append(etf_list[i:i+3])
 
-            col_a, col_g = st.columns(2)
-            with col_a:
-                st.markdown("**📈 A股主要指数**", unsafe_allow_html=True)
-                for d in a_stocks[:7]:
-                    st.markdown(render_index_row(d), unsafe_allow_html=True)
-            with col_g:
-                st.markdown("**🌍 全球指数**", unsafe_allow_html=True)
-                for d in global_stocks[:7]:
-                    st.markdown(render_index_row(d), unsafe_allow_html=True)
-        else:
-            st.info("行情数据暂时不可用（网络环境限制）")
+            for row_etfs in rows:
+                cols = st.columns(3)
+                for ci, row_etf in enumerate(row_etfs):
+                    with cols[ci]:
+                        code = row_etf['code']
+                        name = row_etf['name']
+                        price = row_etf['price']
+                        pct = row_etf['change_pct']
+                        sign = '+' if pct >= 0 else ''
+                        pct_color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
+                        market_cap = row_etf.get('market_cap_yi', 0) or 0
+                        iopv = row_etf.get('iopv', 0) or 0
+
+                        # ── 卡片HTML（头部+图表+stat tile） ──
+                        monthly = flows_data.get(code, {})
+                        months_labels = [f"{m[:4]}年{m[5:]}月" for m in recent_months]
+                        values = [monthly.get(m, 0) for m in recent_months]
+                        bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
+                        max_abs = max(abs(v) for v in values) if values else 1
+
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=months_labels,
+                            y=values,
+                            marker_color=bar_colors,
+                            text=[f"{v:+.0f}" if abs(v) >= 10 else f"{v:+.1f}" for v in values],
+                            textposition='outside',
+                            textfont_size=8,
+                            hovertemplate="%{x}<br>净流入: %{y:+.1f}亿<extra></extra>",
+                        ))
+                        fig.update_layout(
+                            height=155,
+                            margin=dict(l=4, r=4, t=4, b=4),
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(size=9),
+                            showlegend=False,
+                            xaxis=dict(tickangle=-30, showgrid=False, zeroline=False, tickfont=dict(size=8)),
+                            yaxis=dict(
+                                title=None, showgrid=True, gridcolor='#f0f0f0',
+                                zeroline=True, zerolinecolor='#ccc',
+                                range=[-max_abs * 1.3, max_abs * 1.3],
+                                tickfont=dict(size=7),
+                            ),
+                        )
+
+                        iopv_str = f"{iopv:.3f}" if iopv else "—"
+
+                        # 用HTML卡片包裹：头部 + Plotly图 + 两个stat tile
+                        card_html = f"""
+                        <div style="background:white;border-radius:10px;padding:12px 12px 8px;margin:4px 0;box-shadow:0 1px 6px rgba(0,0,0,0.08);border-top:3px solid {pct_color};">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+                                <div>
+                                    <div style="font-weight:700;font-size:0.88rem;color:#1a1a2e;">{name}</div>
+                                    <div style="font-size:1.4rem;font-weight:700;color:#1a1a2e;line-height:1.1;">{price:.3f}</div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-size:1rem;font-weight:700;color:{pct_color};">{sign}{pct:.2f}%</div>
+                                    <div style="font-size:0.68rem;color:#888;">{'资金流入' if pct >= 0 else '资金流出'}</div>
+                                </div>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">
+                                <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
+                                    <div style="font-size:0.68rem;color:#888;">总市值</div>
+                                    <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{market_cap:.0f}亿</div>
+                                </div>
+                                <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
+                                    <div style="font-size:0.68rem;color:#888;">ETF净值(IOPV)</div>
+                                    <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{iopv_str}</div>
+                                </div>
+                            </div>
+                        </div>
+                        """
+                        st.markdown(card_html, unsafe_allow_html=True)
+                        st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
-        # ========== 金融舆情简报 ==========
-        st.markdown('<div class="section-title">📰 舆情与市场动态</div>', unsafe_allow_html=True)
+        # ========== 三栏并排：全球市场 | 个股热度 | 舆情快讯 ==========
+        col_market, col_rank, col_sentiment = st.columns([1, 1, 1])
 
-        with st.spinner("📡 正在抓取新闻与舆情，请稍候..."):
-            try:
-                news_data = fetch_news()
-            except Exception:
-                news_data = {'timeline': [], 'kol': [], 'weibo_sentiment': [], 'xueqiu_hot': [], 'flash': []}
+        # ── 左栏：全球市场 ──
+        with col_market:
+            st.markdown('<div class="section-title">🌏 市场行情</div>', unsafe_allow_html=True)
+            with st.spinner("加载中..."):
+                try:
+                    indices = fetch_major_indices()
+                except Exception:
+                    indices = []
 
-        timeline = news_data.get('timeline', [])
-        kol_list = news_data.get('kol', [])
-        weibo_sentiment = news_data.get('weibo_sentiment', [])
-        xueqiu_hot = news_data.get('xueqiu_hot', [])
-        flash = news_data.get('flash', [])
+            if indices:
+                indices_sorted = sorted(indices, key=lambda x: x['change_pct'], reverse=True)
+                A_CODES = {'sh000001', 'sz399001', 'sz399006', 'sh000300', 'sh000016', 'sh000905', 'sh000688'}
+                a_stocks = [i for i in indices_sorted if i['code'] in A_CODES][:7]
+                g_stocks = [i for i in indices_sorted if i['code'] not in A_CODES][:7]
 
-        # ── 第一行：微博情绪 + 雪球热帖 ──
-        col_ws, col_xq = st.columns(2)
+                def render_idx(d):
+                    pct = d['change_pct']
+                    color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
+                    sign = '+' if pct >= 0 else ''
+                    return f"""<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;">
+                        <span style="font-size:0.82rem;min-width:90px;">{d['name']}</span>
+                        <span style="color:{color};font-weight:700;font-size:0.82rem;">{sign}{pct:.2f}%</span>
+                        <span style="color:#666;font-size:0.78rem;">{d['price']:.2f}</span>
+                    </div>"""
 
-        with col_ws:
-            st.markdown("**📊 微博情绪指数**（舆情冷暖）", unsafe_allow_html=True)
-            if weibo_sentiment:
-                for n in weibo_sentiment[:10]:
-                    title = n.get('title', '')
-                    # 提取指数值判断颜色
-                    import re
-                    m = re.search(r'([+-]?[\d.]+)', title.split(':')[-1] if ':' in title else '')
-                    if m:
-                        try:
-                            val = float(m.group(1))
-                            color = '#c00' if val > 0 else ('#1F4E79' if val < 0 else '#888')
-                        except:
-                            color = '#666'
-                    else:
-                        color = '#666'
-                    st.markdown(f"<span style='color:{color}'>● {title[:30]}</span>", unsafe_allow_html=True)
+                st.markdown("**📈 A股**", unsafe_allow_html=True)
+                for d in a_stocks:
+                    st.markdown(render_idx(d), unsafe_allow_html=True)
+                st.markdown("**🌍 全球**", unsafe_allow_html=True)
+                for d in g_stocks:
+                    st.markdown(render_idx(d), unsafe_allow_html=True)
             else:
                 st.caption("暂无数据")
 
-        with col_xq:
-            st.markdown("**🔥 雪球热议榜**（讨论热度）", unsafe_allow_html=True)
-            if xueqiu_hot:
-                for n in xueqiu_hot[:10]:
-                    title = n.get('title', '')
-                    url = n.get('url', '')
-                    if url:
-                        st.markdown(f"[{title[:35]}]({url})")
-                    else:
-                        st.markdown(f"{title[:35]}")
+        # ── 中栏：站内个股热度 ──
+        with col_rank:
+            st.markdown('<div class="section-title">🔥 站内个股热度</div>', unsafe_allow_html=True)
+            shared_cache = get_shared_cache_stats()
+            stats = shared_cache.get_stats()
+            ranking = shared_cache.get_ranking(limit=8)
+
+            total = stats.get('total_analysis', stats['total_hits'] + stats['total_misses'])
+            st.caption(f"总分析 {total} 次 · {len(ranking)} 只上榜")
+
+            if ranking:
+                df = pd.DataFrame(ranking)
+                df.columns = ["代码", "名称", "次数", "时间"]
+                for i, row in df.head(8).iterrows():
+                    pct = row['次数'] / max(total, 1) * 100
+                    bar_w = int(pct)
+                    st.markdown(f"""
+                    <div style="display:flex;align-items:center;gap:6px;margin:3px 0;">
+                        <span style="font-size:0.75rem;min-width:55px;color:#555;">{row['名称']}</span>
+                        <div style="flex:1;background:#e9ecef;border-radius:3px;height:14px;overflow:hidden;">
+                            <div style="width:{bar_w*2}%;height:100%;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:3px;"></div>
+                        </div>
+                        <span style="font-size:0.72rem;color:#888;min-width:28px;text-align:right;">{row['次数']}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
-                st.caption("暂无数据")
+                st.caption("暂无热度数据")
 
-        st.divider()
+        # ── 右栏：舆情 ──
+        with col_sentiment:
+            st.markdown('<div class="section-title">📰 舆情动态</div>', unsafe_allow_html=True)
+            with st.spinner("加载舆情..."):
+                try:
+                    news_data = fetch_news()
+                except Exception:
+                    news_data = {'flash': [], 'timeline': [], 'xueqiu_hot': []}
 
-        # ── 第二行：快讯 + 最新资讯 ──
-        col_flash, col_news = st.columns([1, 2])
+            tl = news_data.get('timeline', [])[:10]
 
-        with col_flash:
-            st.markdown("**⚡ A股快讯**", unsafe_allow_html=True)
-            if flash:
-                for n in flash[:8]:
-                    t = n.get('time', '')
-                    time_str = t[5:] if t else ''
-                    short = n.get('title', '')[:28] + '...' if len(n.get('title', '')) > 28 else n.get('title', '')
-                    st.markdown(f"**{time_str}** {short}")
-            else:
-                st.caption("暂无数据")
-
-        with col_news:
-            st.markdown("**📰 最新资讯**（点击展开）", unsafe_allow_html=True)
-            if timeline:
-                for n in timeline[:12]:
+            if tl:
+                st.markdown("**📰 最新资讯**", unsafe_allow_html=True)
+                for n in tl:
+                    t = n.get('time', '')[5:] if n.get('time') else ''
                     title = n.get('title', '')
-                    short = title[:40] + '...' if len(title) > 40 else title
-                    t = n.get('time', '')
-                    time_str = t[5:] if t else ''
+                    short = title[:32] + '...' if len(title) > 32 else title
                     src = n.get('source', '')
-                    with st.expander(f"{time_str} {short}", expanded=False):
+                    with st.expander(f"{t} {short}", expanded=False):
                         st.markdown(f"**{title}**")
                         if n.get('url'):
                             st.markdown(f"[查看详情 →]({n['url']})")
                         st.caption(f"来源: {src}")
-            else:
-                st.caption("暂无数据")
-
-        # ── KOL 动态 ──
-        if kol_list:
-            st.divider()
-            st.markdown("**💬 KOL 最新言论**", unsafe_allow_html=True)
-            for n in kol_list[:6]:
-                with st.expander(
-                    f"👤 {n.get('kol', '')} · {n.get('time', '')[5:] if n.get('time') else ''} — {n.get('title', '')[:40]}...",
-                    expanded=False
-                ):
-                    st.markdown(f"**{n.get('title', '')}**")
-                    if n.get('url'):
-                        st.markdown(f"[来源链接 →]({n['url']})")
 
         st.divider()
 
-        st.markdown('<div class="section-title">快速股票查询</div>', unsafe_allow_html=True)
-
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            symbol = st.text_input("输入股票代码", placeholder="例如: 000001", label_visibility="collapsed")
-        with col2:
-            st.write("")
-            analyze_btn = st.button("查询", type="primary", width='stretch')
+        # ========== 快速查询（收窄） ==========
+        col_q1, col_q2, col_q3 = st.columns([3, 1, 1])
+        with col_q1:
+            symbol = st.text_input("输入股票代码查询", placeholder="例如: 000001", label_visibility="collapsed")
+        with col_q2:
+            analyze_btn = st.button("🔍 分析", type="primary", use_container_width=True)
+        with col_q3:
+            st.page_link("https://www.eastmoney.com", label="📑 财报", icon="📑")
 
         if analyze_btn and symbol:
             collectors = init_collectors()
@@ -1327,7 +1402,6 @@ def main():
 
             if ranking:
                 # 转换为DataFrame便于可视化
-                import pandas as pd
                 df_ranking = pd.DataFrame(ranking)
                 df_ranking['排名'] = range(1, len(df_ranking) + 1)
                 df_ranking['股票名称'] = df_ranking['name'].apply(lambda x: x if x else df_ranking['symbol'])
