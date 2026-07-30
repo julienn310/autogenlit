@@ -1367,7 +1367,6 @@ def main():
 
             if ranking:
                 # 转换为DataFrame便于可视化
-                import pandas as pd
                 df_ranking = pd.DataFrame(ranking)
                 df_ranking['排名'] = range(1, len(df_ranking) + 1)
                 df_ranking['股票名称'] = df_ranking['name'].apply(lambda x: x if x else df_ranking['symbol'])
