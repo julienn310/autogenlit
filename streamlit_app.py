@@ -711,7 +711,7 @@ def main():
                 indices_sorted = sorted(indices, key=lambda x: x['change_pct'], reverse=True)
                 A_CODES = {'sh000001', 'sz399001', 'sz399006', 'sh000300', 'sh000016', 'sh000905', 'sh000688'}
                 a_stocks = [i for i in indices_sorted if i['code'] in A_CODES][:7]
-                g_stocks = [i for i in indices_sorted if i['code'] not in A_CODES][:14]
+                g_stocks = [i for i in indices_sorted if i['code'] not in A_CODES][:7]
 
                 def render_idx(d):
                     pct = d['change_pct']

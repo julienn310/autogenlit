@@ -20,15 +20,12 @@ INDICES_TENCENT = {
     'sh000016': '上证50',
     'sh000905': '中证500',
     'sh000688': '科创50',
-    # 全球指数
+    # 全球指数（腾讯API不稳定，日韩英德法澳印时常失败，以实际能获取的为准）
     'hkHSI': '恒生指数',
-    'hkHSCEI': '恒生国企',
-    'hkHSTECH': '恒生科技',
+    'hkHSCEI': '恒生科技',
     'usIXIC': '纳斯达克综合',
-    'usNDX': '纳斯达克100',
     'usDJI': '道琼斯工业',
     'usINX': '标普500',
-    'usVIX': 'VIX恐慌指数',
 }
 
 # 腾讯行情字段索引
@@ -102,20 +99,104 @@ def fetch_major_indices() -> List[Dict]:
     results = []
     codes = list(INDICES_TENCENT.keys())
 
-    # 一次请求所有指数（腾讯接口支持批量查询）
-    query = ','.join(codes)
-    url = f'https://qt.gtimg.cn/q={query}'
+    # 分批请求（腾讯接口每次最多约20个）
+    batch_size = 15
+    for i in range(0, len(codes), batch_size):
+        batch = codes[i:i + batch_size]
+        query = ','.join(batch)
+        url = f'https://qt.gtimg.cn/q={query}'
+
+        try:
+            r = session.get(url, timeout=10)
+            r.encoding = 'gbk'
+
+            for code in batch:
+                data = _parse_tencent_response(r.text, code)
+                if data:
+                    results.append(data)
+        except Exception as e:
+            logger.warning(f"批次获取失败 {batch[0]}: {e}")
+            continue
+
+    # 补充新浪全球指数（日经、英国富时；美股用腾讯已有数据，不再重复添加）
     try:
-        r = session.get(url, timeout=10)
-        r.encoding = 'gbk'
-        for code in codes:
-            data = _parse_tencent_response(r.text, code)
-            if data:
-                results.append(data)
-    except Exception as e:
-        logger.warning(f"获取指数失败: {e}")
+        sina_results = fetch_sina_global_indices()
+        # 只保留日经和英国富时（Sina有，美股用腾讯的避免重复）
+        sina_keep = {'int_nikkei', 'int_ftse'}
+        results.extend([s for s in sina_results if s['code'] in sina_keep])
+    except Exception:
+        pass
 
     return results
+
+
+# 新浪全球指数（补充腾讯覆盖不到的日经、英国富时）
+SINA_GLOBAL_CODES = {
+    'int_nikkei': '日经225',
+    'int_ftse': '英国富时100',
+    'int_nasdaq': '纳斯达克综合',
+    'int_dji': '道琼斯工业',
+    'int_sp500': '标普500',
+}
+
+
+def fetch_sina_global_indices() -> List[Dict]:
+    """
+    通过新浪财经接口获取全球指数（腾讯覆盖不到的补充）
+    格式: int_nikkei, int_ftse, int_nasdaq, int_dji, int_sp500
+    返回: [{name, code, price, change, change_pct}, ...]
+    """
+    session = requests.Session()
+    session.trust_env = False
+    headers = {'Referer': 'https://finance.sina.com.cn'}
+
+    codes_str = ','.join(SINA_GLOBAL_CODES.keys())
+    url = f'https://hq.sinajs.cn/list={codes_str}'
+
+    try:
+        r = session.get(url, headers=headers, timeout=10)
+        r.encoding = 'gbk'
+        results = []
+
+        for line in r.text.strip().split('\n'):
+            try:
+                raw = line.split('=')
+                if len(raw) < 2:
+                    continue
+                key = raw[0].replace('var hq_str_', '').strip()
+                if key not in SINA_GLOBAL_CODES:
+                    continue
+                val = raw[1].strip('";\n')
+                if not val:
+                    continue
+                fields = val.split(',')
+                if len(fields) < 4 or not fields[1]:
+                    continue
+
+                name = fields[0]
+                try:
+                    price = float(fields[1])
+                except (ValueError, TypeError):
+                    price = 0.0
+                try:
+                    change_pct = float(fields[3])
+                except (ValueError, TypeError):
+                    change_pct = 0.0
+
+                results.append({
+                    'name': name,
+                    'code': key,
+                    'price': price,
+                    'change': 0.0,
+                    'change_pct': change_pct,
+                    'source': 'sina',
+                })
+            except Exception:
+                continue
+
+        return results
+    except Exception:
+        return []
 
 
 # 主要ETF列表（宽基 + 热门行业）
