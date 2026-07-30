@@ -9,6 +9,7 @@ import os
 import pandas as pd
 import threading
 import plotly.express as px
+import plotly.graph_objects as go
 from pathlib import Path
 import time
 
@@ -594,91 +595,114 @@ def main():
         # ========== ETF 基金流向监控 ==========
         st.markdown('<div class="section-title">💰 ETF基金资金流向监控</div>', unsafe_allow_html=True)
 
-        col_etf_spot, col_etf_flow = st.columns([1, 2])
+        with st.spinner("加载ETF数据..."):
+            try:
+                from src.data.market_collector import fetch_etf_data, fetch_etf_monthly_flows
+                etf_list = fetch_etf_data()
+                flows_data = fetch_etf_monthly_flows()
+            except Exception:
+                etf_list = []
+                flows_data = {}
 
-        with col_etf_spot:
-            st.markdown("**📊 今日涨跌**", unsafe_allow_html=True)
-            with st.spinner("加载ETF行情..."):
-                try:
-                    from src.data.market_collector import fetch_etf_data
-                    etf_list = fetch_etf_data()
-                except Exception:
-                    etf_list = []
+        # 今日涨跌 + 市值 + 近两月净流入对比
+        if etf_list:
+            etf_spot_df = pd.DataFrame(etf_list)
+            etf_names_map = {
+                'sh510300': '沪深300ETF', 'sh510500': '中证500ETF',
+                'sz159915': '创业板ETF', 'sh510050': '上证50ETF',
+                'sh512880': '证券ETF', 'sh512760': '芯片ETF',
+                'sh512690': '酒ETF', 'sz159919': '沪深300(深)', 'sh515000': '科技ETF',
+            }
 
-            if etf_list:
-                etf_df = pd.DataFrame(etf_list)
-                etf_df = etf_df.sort_values('change_pct', ascending=False)
-                for _, row in etf_df.iterrows():
-                    pct = row['change_pct']
-                    color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
-                    sign = '+' if pct >= 0 else ''
-                    st.markdown(f"""
-                    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #eee;">
-                        <span style="font-size:0.8rem;min-width:90px;">{row['name']}</span>
-                        <span style="color:{color};font-weight:700;font-size:0.85rem;">{sign}{pct:.2f}%</span>
-                    </div>""", unsafe_allow_html=True)
-            else:
-                st.caption("暂无数据")
+            # 近两月净流入
+            latest_months = sorted(set(m for d in flows_data.values() for m in d.keys()))
+            m1 = latest_months[-1] if len(latest_months) >= 1 else None
+            m2 = latest_months[-2] if len(latest_months) >= 2 else None
 
-        with col_etf_flow:
-            st.markdown("**📈 近一年月度净流入（亿元）**", unsafe_allow_html=True)
-            with st.spinner("加载月度资金流..."):
-                try:
-                    from src.data.market_collector import fetch_etf_monthly_flows
-                    flows_data = fetch_etf_monthly_flows()
-                except Exception:
-                    flows_data = {}
+            rows = []
+            for _, row in etf_spot_df.iterrows():
+                code = row.get('code', '')
+                pct = row['change_pct']
+                amount_wan = row.get('amount', 0)  # 万元
+                # 最新收盘价估算（从amount和volume推算均价）
+                vol_wan = row.get('volume', 0)  # 万股
+                avg_price = amount_wan / vol_wan if vol_wan else 0
+                # 估算规模 = 均价 × 份额（亿份），用 amount/price * 10000/1e8
+                # 但更直接：用成交额/换手率估算...这里用 amount(万元) 作为日均成交参考
+                # 市值估算 = avg_price × 份额（亿份），shares ≈ amount/avg_price/10000
+                shares_yi = (amount_wan / avg_price / 10000) if avg_price > 0 else 0
+                m1_flow = flows_data.get(code, {}).get(m1, None)
+                m2_flow = flows_data.get(code, {}).get(m2, None)
+                rows.append({
+                    'ETF': etf_names_map.get(code, row.get('name', code)),
+                    '代码': code,
+                    '涨跌%': pct,
+                    '最新价': avg_price,
+                    '估算规模(亿)': shares_yi,
+                    f'{m1}净流入' if m1 else '最新月净流入': m1_flow,
+                    f'{m2}净流入' if m2 else '上月净流入': m2_flow,
+                })
 
+            spot_df = pd.DataFrame(rows)
+
+            # 用热力图展示月度资金流（近12月 × ETF）
             if flows_data:
-                # 构建 Plotly 分组柱状图：每只ETF一根柱子/月
-                import plotly.graph_objects as go
+                all_months = sorted(set(m for d in flows_data.values() for m in d))
+                recent = all_months[-12:] if len(all_months) > 12 else all_months
+                etf_codes = list(flows_data.keys())
 
-                # 收集所有月份（排序）
-                all_months = sorted(set(
-                    m for months in flows_data.values() for m in months
+                # 构建热力图矩阵
+                z_data = []
+                for code in etf_codes:
+                    z_data.append([flows_data[code].get(m, 0) for m in recent])
+
+                x_labels = [m[-2:] for m in recent]  # 只显示月 MM
+                y_labels = [etf_names_map.get(c, c) for c in etf_codes]
+
+                fig_heat = go.Figure(go.Heatmap(
+                    z=z_data,
+                    x=x_labels,
+                    y=y_labels,
+                    colorscale=[
+                        [0, '#1F4E79'],      # 深红（流出）
+                        [0.5, '#f5f5f5'],    # 白（零）
+                        [1, '#dc3545'],      # 深红（流入）
+                    ],
+                    zmid=0,
+                    text=[[f"{v:+.0f}" for v in row] for row in z_data],
+                    texttemplate="%{text}",
+                    textfont=dict(size=9, color='white'),
+                    hovertemplate='%{y} %{x}月: %{z:+.1f}亿<extra></extra>',
+                    colorbar=dict(title="净流入(亿)", tickformat="+.0f"),
                 ))
-                # 过滤近12个月
-                recent = [m for m in all_months if m >= all_months[-13]] if len(all_months) > 12 else all_months
-                if len(recent) < 6:
-                    recent = all_months[-12:] if len(all_months) > 12 else all_months
-
-                # ETF中文名映射
-                etf_names = {
-                    'sh510300': '沪深300ETF', 'sh510500': '中证500ETF',
-                    'sz159915': '创业板ETF', 'sh510050': '上证50ETF',
-                    'sh512880': '证券ETF', 'sh512760': '芯片ETF',
-                    'sh512690': '酒ETF', 'sz159919': '沪深300(深)',
-                    'sh515000': '科技ETF',
-                }
-                fig = go.Figure()
-                for code, monthly in flows_data.items():
-                    name = etf_names.get(code, code)
-                    values = [monthly.get(m, 0) for m in recent]
-                    bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
-                    fig.add_trace(go.Bar(
-                        x=recent,
-                        y=values,
-                        name=name,
-                        marker_color=bar_colors,
-                        text=[f"{v:+.1f}" if abs(v) >= 1 else f"{v:+.2f}" for v in values],
-                        textposition='outside',
-                        textfont_size=9,
-                    ))
-
-                fig.update_layout(
-                    barmode='group',
-                    height=260,
-                    margin=dict(l=10, r=10, t=5, b=40),
+                fig_heat.update_layout(
+                    height=max(280, 30 * len(etf_codes)),
+                    margin=dict(l=10, r=10, t=5, b=5),
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(size=10),
-                    legend=dict(orientation="h", y=-0.25, font=dict(size=9)),
-                    xaxis=dict(tickangle=-30),
-                    yaxis=dict(title=None, zeroline=True, zerolinecolor='#ccc'),
+                    xaxis=dict(title="月份", tickangle=-30, side='bottom'),
+                    yaxis=dict(title=None, ticksuffix="  "),
                 )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.caption("月度数据暂时不可用")
+                st.plotly_chart(fig_heat, use_container_width=True)
+
+            # ETF 详情表格：涨跌 + 市值 + 近两月净流入
+            display_df = spot_df.copy()
+            display_df['估算规模(亿)'] = display_df['估算规模(亿)'].apply(
+                lambda x: f"{x:.0f}亿" if x > 0 else "-"
+            )
+            for col in ['涨跌%', f'{m1}净流入' if m1 else '最新月净流入', f'{m2}净流入' if m2 else '上月净流入']:
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].apply(
+                        lambda x: f"{x:+.2f}亿" if x is not None else "-"
+                    )
+            display_df['最新价'] = display_df['最新价'].apply(lambda x: f"¥{x:.3f}" if x > 0 else "-")
+            display_df = display_df[['ETF', '涨跌%', '最新价', '估算规模(亿)',
+                                     f'{m1}净流入' if m1 else '最新月净流入',
+                                     f'{m2}净流入' if m2 else '上月净流入']]
+            st.dataframe(display_df, width='stretch', hide_index=True, height=200)
+        else:
+            st.info("ETF 数据暂时不可用")
 
         st.divider()
 
