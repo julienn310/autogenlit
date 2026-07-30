@@ -137,9 +137,11 @@ ETF_CODES = {
     'sh512880': '证券ETF',
     'sh512760': '芯片ETF',
     'sh512690': '酒ETF',
-    'sz159919': '沪深300ETF（深）',
     'sh515000': '科技ETF',
-    'sh513500': '纳指ETF',
+    'sh512010': '医药ETF',
+    'sh512660': '军工ETF',
+    'sh516800': '新能源ETF',
+    'sh516070': '化工ETF',
 }
 
 
@@ -251,8 +253,11 @@ def fetch_etf_monthly_flows() -> Dict[str, Dict[str, float]]:
         ('sh512880', '证券ETF'),
         ('sh512760', '芯片ETF'),
         ('sh512690', '酒ETF'),
-        ('sz159919', '沪深300ETF(深)'),
         ('sh515000', '科技ETF'),
+        ('sh512010', '医药ETF'),
+        ('sh512660', '军工ETF'),
+        ('sh516800', '新能源ETF'),
+        ('sh516070', '化工ETF'),
     ]
 
     results = {}  # {etf_code: {month: flow_billion}}

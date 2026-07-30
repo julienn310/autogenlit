@@ -769,8 +769,8 @@ def main():
                 except Exception:
                     news_data = {'flash': [], 'timeline': [], 'xueqiu_hot': []}
 
-            xq = news_data.get('xueqiu_hot', [])[:6]
-            tl = news_data.get('timeline', [])[:6]
+            xq = news_data.get('xueqiu_hot', [])[:5]
+            tl = news_data.get('timeline', [])[:10]
 
             if xq:
                 st.markdown("**🔥 雪球热帖**", unsafe_allow_html=True)
@@ -781,19 +781,19 @@ def main():
                         st.markdown(f"[{title}]({url})")
                     else:
                         st.markdown(title)
+
             if tl:
-                with st.expander("📰 资讯简报", expanded=False):
-                    for n in tl:
-                        t = n.get('time', '')[5:] if n.get('time') else ''
-                        src = n.get('source', '未知')
-                        title = n.get('title', '')
-                        url = n.get('url', '')
-                        if url:
-                            st.markdown(f"**{t}** {title}")
-                            st.markdown(f"[查看详情 →]({url})  | 来源: {src}")
-                        else:
-                            st.markdown(f"**{t}** {title}  | 来源: {src}")
-                        st.divider()
+                st.markdown("**📰 最新资讯**", unsafe_allow_html=True)
+                for n in tl:
+                    t = n.get('time', '')[5:] if n.get('time') else ''
+                    title = n.get('title', '')
+                    short = title[:32] + '...' if len(title) > 32 else title
+                    src = n.get('source', '')
+                    with st.expander(f"{t} {short}", expanded=False):
+                        st.markdown(f"**{title}**")
+                        if n.get('url'):
+                            st.markdown(f"[查看详情 →]({n['url']})")
+                        st.caption(f"来源: {src}")
 
         st.divider()
 
