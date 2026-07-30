@@ -11,6 +11,7 @@ build
 .git
 .gitignore
 .env
+.env.example
 .venv
 venv
 *.log
@@ -20,4 +21,10 @@ output
 .idea
 .vscode
 *.md
+!README.md
 !requirements.txt
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/
+.streamlit/config.toml

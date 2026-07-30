@@ -1,5 +1,5 @@
 # A股智能体分析系统 - Docker配置
-# 适用于 Render / Railway / Fly.io 等平台
+# 适用于 Render / Railway / Fly.io / Streamlit Cloud
 
 FROM python:3.10-slim
 
@@ -27,8 +27,8 @@ RUN mkdir -p /app/output /app/logs && chown -R appuser:appuser /app
 USER appuser
 
 # 暴露端口
-ENV PORT=8000
-EXPOSE 8000
+ENV PORT=8501
+EXPOSE 8501
 
-# 启动命令
-CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动命令（Streamlit）
+CMD ["streamlit", "run", "streamlit_app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]

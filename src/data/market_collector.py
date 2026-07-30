@@ -127,6 +127,105 @@ def fetch_major_indices() -> List[Dict]:
     return results
 
 
+# 主要ETF列表（宽基 + 热门行业）
+ETF_CODES = {
+    'sh510300': '沪深300ETF',
+    'sh510500': '中证500ETF',
+    'sz159915': '创业板ETF',
+    'sh510050': '上证50ETF',
+    'sh512880': '证券ETF',
+    'sh512760': '芯片ETF',
+    'sh512690': '酒ETF',
+    'sz159919': '沪深300ETF（深）',
+    'sh515000': '科技ETF',
+    'sh513500': '纳指ETF',
+}
+
+
+def fetch_etf_data() -> List[Dict]:
+    """
+    获取主要ETF实时行情（价格、涨跌幅、估算资金流向）
+    资金流向估算：基于价格涨跌方向 + 成交量变化
+    """
+    session = requests.Session()
+    session.trust_env = False
+
+    results = []
+    codes = list(ETF_CODES.keys())
+
+    # 腾讯行情字段索引（ETF格式）
+    # v_sh510300="1~名称~代码~当前价~昨日收盘~今日开盘~成交量~成交额~~..."
+    # ETF字段：parts[3]=当前价, parts[4]=昨日收盘, parts[31]=涨跌额, parts[32]=涨跌幅%
+    TQ_FIELDS_ETF = ['unused', 'name', 'code', 'price', 'prev_close', 'open',
+                     'volume', 'amount', 'unused2', 'bid', 'ask',
+                     'change', 'change_pct']
+
+    batch_size = 10
+    for i in range(0, len(codes), batch_size):
+        batch = codes[i:i + batch_size]
+        query = ','.join(batch)
+        url = f'https://qt.gtimg.cn/q={query}'
+
+        try:
+            r = session.get(url, timeout=10)
+            r.encoding = 'gbk'
+
+            for code in batch:
+                try:
+                    prefix = f'v_{code}="'
+                    idx = r.text.find(prefix)
+                    if idx < 0:
+                        continue
+                    start = idx + len(prefix)
+                    end = r.text.find('"', start)
+                    raw = r.text[start:end]
+                    parts = raw.split('~')
+                    if len(parts) < 33:
+                        continue
+
+                    name = parts[1]
+                    try:
+                        price = float(parts[3]) if parts[3] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        price = 0.0
+                    try:
+                        prev_close = float(parts[4]) if parts[4] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        prev_close = 0.0
+                    try:
+                        change_pct = float(parts[32]) if parts[32] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        change_pct = 0.0
+                    try:
+                        amount = float(parts[37]) if len(parts) > 37 and parts[37] not in ('', '-') else 0.0
+                    except (ValueError, TypeError):
+                        amount = 0.0
+
+                    # 估算资金流向：涨为流入，跌为流出
+                    flow_direction = 'in' if change_pct >= 0 else 'out'
+                    flow_color = '#dc3545' if change_pct >= 0 else '#1F4E79'
+                    flow_icon = '↑资金流入' if change_pct >= 0 else '↓资金流出'
+
+                    results.append({
+                        'name': name,
+                        'code': code,
+                        'price': price,
+                        'prev_close': prev_close,
+                        'change_pct': change_pct,
+                        'amount': amount,  # 成交额（万元）
+                        'flow_direction': flow_direction,
+                        'flow_color': flow_color,
+                        'flow_icon': flow_icon,
+                        'source': 'tencent',
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    return results
+
+
 def fetch_sector_data() -> Dict[str, List[Dict]]:
     """
     尝试获取行业板块数据
