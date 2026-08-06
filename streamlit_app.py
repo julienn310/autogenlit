@@ -570,7 +570,7 @@ def main():
         st.success("API Key 已配置")
         st.divider()
         page = st.radio("导航", [
-            "仪表板", "财务分析", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
+            "仪表板", "资金流向", "财务分析", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
         ], index=0)
         st.divider()
         st.caption("系统状态: 正常运行")
@@ -654,7 +654,7 @@ def main():
                             paper_bgcolor="rgba(0,0,0,0)",
                             font=dict(size=9),
                             showlegend=False,
-                            xaxis=dict(tickangle=-30, showgrid=False, zeroline=False, tickfont=dict(size=8)),
+                            xaxis=dict(tickangle=-30, showgrid=False, zeroline=False, tickfont=dict(size=8), type='category'),
                             yaxis=dict(
                                 title=None, showgrid=True, gridcolor='#f0f0f0',
                                 zeroline=True, zerolinecolor='#ccc',
@@ -667,7 +667,7 @@ def main():
 
                         # 用HTML卡片包裹：头部 + Plotly图 + 两个stat tile
                         card_html = f"""
-                        <div style="background:white;border-radius:10px;padding:12px 12px 8px;margin:4px 0;box-shadow:0 1px 6px rgba(0,0,0,0.08);border-top:3px solid {pct_color};">
+                        <div style="background:white;border-radius:10px;padding:12px 12px 8px;margin:4px 0;box-shadow:0 1px 6px rgba{{0,0,0,0.08}};border-top:3px solid {pct_color};">
                             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
                                 <div>
                                     <div style="font-weight:700;font-size:0.88rem;color:#1a1a2e;">{name}</div>
@@ -838,9 +838,351 @@ def main():
             else:
                 st.error("获取数据失败，请检查股票代码是否正确")
 
+    # ==================== 资金流向 ====================
+    elif page == "资金流向":
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">💰 ETF基金资金流向</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">近30个交易日每日净流入/流出监控</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.spinner("📊 正在加载资金流向数据..."):
+            try:
+                from src.data.market_collector import fetch_etf_data, fetch_etf_daily_flows
+                etf_list = fetch_etf_data()
+                daily_flows = fetch_etf_daily_flows()
+            except Exception as e:
+                etf_list = []
+                daily_flows = {}
+                st.error(f"数据加载失败: {e}")
+
+        import plotly.graph_objects as go
+
+        # ========== 板块资金流向总览 ==========
+        with st.spinner("📊 加载板块资金流向..."):
+            try:
+                from src.data.market_collector import fetch_sector_flow_data
+                sector_flows = fetch_sector_flow_data()
+            except Exception as ex:
+                sector_flows = []
+                _fetch_err = str(ex)
+
+        if not sector_flows:
+            st.warning("⚠️ 板块资金流向数据获取失败（网络或API问题），请稍后刷新重试")
+        else:
+            is_demo = any(s.get('demo') for s in sector_flows)
+            if is_demo:
+                st.info("📌 当前显示演示数据（API暂时不可用），实际数据部署到云端后自动恢复")
+
+            # ── 汇总统计 ────────────────────────────────────────────────
+            in_flows = [s for s in sector_flows if s['flow_yi'] > 0]
+            out_flows = [s for s in sector_flows if s['flow_yi'] < 0]
+            total_in = sum(s['flow_yi'] for s in in_flows)
+            total_out = sum(s['flow_yi'] for s in out_flows)
+            net = total_in + total_out
+            top_flows = sector_flows[:15]
+
+            col_a, col_b, col_c, col_d = st.columns(4)
+            with col_a:
+                st.metric("🔵 资金流入板块", f"{len(in_flows)}个",
+                          f"{total_in:+.1f}亿", delta_color="normal")
+            with col_b:
+                st.metric("🔴 资金流出板块", f"{len(out_flows)}个",
+                          f"{total_out:+.1f}亿", delta_color="normal")
+            with col_c:
+                st.metric("📊 全市场主力净流入", f"{net:+.1f}亿",
+                          delta_color="normal")
+            with col_d:
+                st.metric("🏆 最强净流入", top_flows[0]['name'] if top_flows else "—",
+                          f"{top_flows[0]['flow_yi']:+.1f}亿", delta_color="normal")
+
+            st.markdown("")  # spacer
+
+            # ── 动态粒子流动网状图（SVG）─────────────────────────────
+            disp = sector_flows[:12]
+            n_nodes = len(disp)
+            W, H = 1100, 680
+            cx, cy = W // 2, H // 2
+            R = 280
+
+            import random, math as _math
+            random.seed(99)
+            angles = [(2 * _math.pi / n_nodes) * i for i in range(n_nodes)]
+            node_pos = []
+            for i_ang, ang in enumerate(angles):
+                r = R + random.uniform(-20, 20)
+                x = cx + r * _math.cos(ang)
+                y = cy + r * _math.sin(ang)
+                node_pos.append((x, y))
+
+            # ── 静态连接线 ────────────────────────────────────────
+            line_parts = []
+            for i_s, s_i in enumerate(disp):
+                xi, yi = node_pos[i_s]
+                for j_s, s_j in enumerate(disp):
+                    if j_s <= i_s:
+                        continue
+                    xj, yj = node_pos[j_s]
+                    f_i, f_j = s_i['flow_yi'], s_j['flow_yi']
+                    if abs(f_i - f_j) < 20 and (f_i > 0) == (f_j > 0):
+                        color = '#2a78d6' if f_i > 0 else '#e34948'
+                        sw = max(0.5, min(abs(f_i + f_j) / 10, 4))
+                        mx, my = (xi + xj) / 2 + random.uniform(-30, 30), (yi + yj) / 2 + random.uniform(-30, 30)
+                        line_parts.append(
+                            f'<path d="M {xi:.0f},{yi:.0f} Q {mx:.0f},{my:.0f} {xj:.0f},{yj:.0f}" '
+                            f'fill="none" stroke="{color}" stroke-width="{sw:.1f}" stroke-opacity="0.18" stroke-linecap="round"/>'
+                        )
+                if abs(f_i) > 5:
+                    color = '#2a78d6' if f_i > 0 else '#e34948'
+                    sw = max(0.5, min(abs(f_i) / 6, 5))
+                    mx = (xi + cx) / 2 + random.uniform(-60, 60)
+                    my = (yi + cy) / 2 + random.uniform(-60, 60)
+                    line_parts.append(
+                        f'<path d="M {xi:.0f},{yi:.0f} Q {mx:.0f},{my:.0f} {cx:.0f},{cy:.0f}" '
+                        f'fill="none" stroke="{color}" stroke-width="{sw:.1f}" stroke-opacity="0.18" stroke-linecap="round"/>'
+                    )
+
+            # ── 动态流动粒子（沿路径游走的发光圆点） ─────────────────
+            # 方案：用CSS动画让多个小圆沿SVG路径位移
+            def _make_flow_path(path_id, x1, y1, x2, y2, mx, my, color, dur, delay, inward):
+                """返回路径定义 + 沿路径游走的发光粒子组"""
+                d = f"M {x1:.0f},{y1:.0f} Q {mx:.0f},{my:.0f} {x2:.0f},{y2:.0f}"
+                dur_s = f"{dur:.2f}s"
+                delay_s = f"{-delay:.2f}s" if delay > 0 else "0s"
+                # 粒子游走：沿路径从起点到终点（inward）或者反向
+                sx, sy = (x2, y2) if inward else (x1, y1)
+                ex, ey = (x1, y1) if inward else (x2, y2)
+                return (
+                    f'<path id="{path_id}" d="{d}" fill="none" stroke="none"/>'
+                    f'<circle r="5" fill="{color}" opacity="0.9">'
+                    f'<animateMotion dur="{dur_s}" repeatCount="indefinite" begin="{delay_s}" calcMode="linear">'
+                    f'<mpath href="#{path_id}"/>'
+                    f'</animateMotion>'
+                    f'<animate attributeName="opacity" values="0.9;0.4;0.9" dur="{dur_s}" repeatCount="indefinite" begin="{delay_s}"/>'
+                    f'<animate attributeName="r" values="5;3;5" dur="{dur_s}" repeatCount="indefinite" begin="{delay_s}"/>'
+                    f'</circle>'
+                )
+
+            flow_parts = []
+            pid = [0]
+            def next_pid():
+                pid[0] += 1
+                return f"p{pid[0]}"
+
+            for i_s, s_i in enumerate(disp):
+                xi, yi = node_pos[i_s]
+                f_i = s_i['flow_yi']
+                if abs(f_i) > 5:
+                    color = '#2a78d6' if f_i > 0 else '#e34948'
+                    dur = 1.0 + random.uniform(0, 0.8)
+                    delay = random.uniform(0, 1.5)
+                    mx = (xi + cx) / 2 + random.uniform(-60, 60)
+                    my = (yi + cy) / 2 + random.uniform(-60, 60)
+                    p = next_pid()
+                    flow_parts.append(_make_flow_path(p, xi, yi, cx, cy, mx, my, color, dur, delay, f_i > 0))
+                    # 第二颗反向错开的粒子
+                    flow_parts.append(_make_flow_path(next_pid(), xi, yi, cx, cy, mx, my, color, dur * 1.4, delay + 0.5, f_i > 0))
+                for j_s, s_j in enumerate(disp):
+                    if j_s <= i_s:
+                        continue
+                    xj, yj = node_pos[j_s]
+                    f_j = s_j['flow_yi']
+                    if abs(f_i - f_j) < 20 and (f_i > 0) == (f_j > 0):
+                        color = '#2a78d6' if f_i > 0 else '#e34948'
+                        dur = 1.5 + random.uniform(0, 1)
+                        delay = random.uniform(0, 1.5)
+                        mx = (xi + xj) / 2 + random.uniform(-30, 30)
+                        my = (yi + yj) / 2 + random.uniform(-30, 30)
+                        p = next_pid()
+                        flow_parts.append(_make_flow_path(p, xi, yi, xj, yj, mx, my, color, dur, delay, f_i > 0))
+
+            # ── 节点 ──────────────────────────────────────────────
+            node_svg_parts = []
+            for i_s, s in enumerate(disp):
+                x, y = node_pos[i_s]
+                f = s['flow_yi']
+                r = max(20, min(abs(f) * 1.5 + 16, 48))
+                color = '#2a78d6' if f >= 0 else '#e34948'
+                sign = '+' if f >= 0 else ''
+                nm = s['name'][:4]
+                dur = 1.4 + (i_s % 3) * 0.3
+                node_svg_parts.append(
+                    f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r:.0f}" fill="{color}" fill-opacity="0.18" stroke="{color}" stroke-width="2">'
+                    f'<animate attributeName="r" values="{r:.0f};{r*1.1:.0f};{r:.0f}" dur="{dur:.1f}s" repeatCount="indefinite"/>'
+                    f'<animate attributeName="fill-opacity" values="0.18;0.38;0.18" dur="{dur:.1f}s" repeatCount="indefinite"/>'
+                    f'</circle>'
+                    f'<text x="{x:.0f}" y="{y:.0f}" text-anchor="middle" dominant-baseline="central" '
+                    f'fill="{color}" font-size="11" font-weight="800" font-family="system-ui">{sign}{abs(f):.0f}</text>'
+                    f'<text x="{x:.0f}" y="{(y + r + 14):.0f}" text-anchor="middle" '
+                    f'fill="#52514e" font-size="10" font-family="system-ui">{nm}</text>'
+                )
+
+            # 中心
+            center_color = '#2a78d6' if net >= 0 else '#e34948'
+            node_svg_parts.append(
+                f'<circle cx="{cx}" cy="{cy}" r="58" fill="white" stroke="{center_color}" stroke-width="2.5"/>'
+                f'<text x="{cx}" y="{cy - 14}" text-anchor="middle" fill="#52514e" font-size="10" font-family="system-ui">主力净流入</text>'
+                f'<text x="{cx}" y="{cy + 10}" text-anchor="middle" fill="{center_color}" font-size="20" font-weight="900" font-family="system-ui">{net:+.0f}亿</text>'
+                f'<text x="{cx}" y="{cy + 28}" text-anchor="middle" fill="#898781" font-size="9" font-family="system-ui">↑{total_in:.0f}  ↓{abs(total_out):.0f}</text>'
+            )
+
+            svg_html = (
+                '<svg viewBox="0 0 ' + str(W) + ' ' + str(H) + '" '
+                'width="100%" style="max-width:' + str(W) + 'px;margin:0 auto;display:block;background:#fcfcfc;border-radius:14px;">'
+                + ''.join(line_parts)
+                + ''.join(flow_parts)
+                + ''.join(node_svg_parts)
+                + '</svg>'
+            )
+
+            st.markdown(f"""
+            <div style="background:white;border-radius:14px;padding:16px;margin:8px 0;box-shadow:0 2px 16px rgba(0,0,0,0.07);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span style="font-size:1rem;font-weight:700;color:#0b0b0b;">🌊 板块资金流速图</span>
+                    <div style="display:flex;gap:12px;font-size:0.78rem;color:#52514e;">
+                        <span style="display:flex;align-items:center;gap:4px;">
+                            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2a78d6;"></span>资金流入
+                        </span>
+                        <span style="display:flex;align-items:center;gap:4px;">
+                            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#e34948;"></span>资金流出
+                        </span>
+                    </div>
+                </div>
+                {svg_html}
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── 两栏：净流入前5 + 净流出前5 ──────────────────────────
+            st.markdown("""
+            <div style="display:flex;gap:16px;margin-top:4px;">
+                <div style="flex:1;">
+                    <div style="font-size:0.85rem;font-weight:700;color:#2a78d6;margin-bottom:8px;">▲ 资金流入 TOP5</div>
+            """, unsafe_allow_html=True)
+
+            # 左：净流入前5
+            inflow_top = sorted(in_flows, key=lambda x: x['flow_yi'], reverse=True)[:5]
+            for rank, s in enumerate(inflow_top, 1):
+                pct = s['change_pct']
+                bar_w = min(abs(s['flow_yi']) / max(abs(inflow_top[0]['flow_yi']), 0.01), 1) * 100
+                sign = '+' if pct >= 0 else ''
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+                    <span style="font-size:0.75rem;color:#898781;min-width:18px;text-align:right;">{rank}</span>
+                    <span style="font-size:0.82rem;font-weight:600;color:#0b0b0b;min-width:70px;">{s['name']}</span>
+                    <div style="flex:1;background:#f0f0ee;border-radius:3px;height:14px;overflow:hidden;">
+                        <div style="width:{bar_w:.0f}%;height:100%;background:#2a78d6;border-radius:3px;"></div>
+                    </div>
+                    <span style="font-size:0.82rem;font-weight:700;color:#2a78d6;min-width:62px;text-align:right;">{s['flow_yi']:+.1f}亿</span>
+                    <span style="font-size:0.75rem;color:#898781;min-width:46px;text-align:right;">{sign}{pct:+.2f}%</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("</div><div style='flex:1;'><div style='font-size:0.85rem;font-weight:700;color:#e34948;margin-bottom:8px;'>▼ 资金流出 TOP5</div>", unsafe_allow_html=True)
+
+            # 右：净流出前5
+            outflow_top = sorted(out_flows, key=lambda x: x['flow_yi'])[:5]
+            for rank, s in enumerate(outflow_top, 1):
+                pct = s['change_pct']
+                bar_w = min(abs(s['flow_yi']) / max(abs(outflow_top[0]['flow_yi']), 0.01), 1) * 100
+                sign = '+' if pct >= 0 else ''
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+                    <span style="font-size:0.75rem;color:#898781;min-width:18px;text-align:right;">{rank}</span>
+                    <span style="font-size:0.82rem;font-weight:600;color:#0b0b0b;min-width:70px;">{s['name']}</span>
+                    <div style="flex:1;background:#f0f0ee;border-radius:3px;height:14px;overflow:hidden;">
+                        <div style="width:{bar_w:.0f}%;height:100%;background:#e34948;border-radius:3px;"></div>
+                    </div>
+                    <span style="font-size:0.82rem;font-weight:700;color:#e34948;min-width:62px;text-align:right;">{s['flow_yi']:+.1f}亿</span>
+                    <span style="font-size:0.75rem;color:#898781;min-width:46px;text-align:right;">{sign}{pct:+.2f}%</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("</div></div>", unsafe_allow_html=True)
+
+        if etf_list:
+            rows = []
+            for i in range(0, len(etf_list), 3):
+                rows.append(etf_list[i:i+3])
+
+            for row_etfs in rows:
+                cols = st.columns(3)
+                for ci, row_etf in enumerate(row_etfs):
+                    with cols[ci]:
+                        code = row_etf['code']
+                        name = row_etf['name']
+                        price = row_etf['price']
+                        pct = row_etf['change_pct']
+                        sign = '+' if pct >= 0 else ''
+                        pct_color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
+
+                        daily = daily_flows.get(code, [])
+                        dates = [d['date'][5:] for d in daily]
+                        values = [d['flow'] for d in daily]
+                        bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
+                        max_abs = max(abs(v) for v in values) if values else 1
+
+                        # 近30日合计
+                        total_30d = sum(values)
+                        total_str = f"{total_30d:+,.1f}亿"
+
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=dates,
+                            y=values,
+                            marker_color=bar_colors,
+                            text=[f"{v:+.0f}" if abs(v) >= 10 else f"{v:+.1f}" for v in values],
+                            textposition='outside',
+                            textfont_size=7,
+                            hovertemplate="%{x}<br>净流入: %{y:+.1f}亿<extra></extra>",
+                        ))
+                        fig.update_layout(
+                            height=160,
+                            margin=dict(l=4, r=4, t=4, b=4),
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(size=9),
+                            showlegend=False,
+                            xaxis=dict(tickangle=-30, showgrid=False, zeroline=False, tickfont=dict(size=7), type='category'),
+                            yaxis=dict(
+                                title=None, showgrid=True, gridcolor='#f0f0f0',
+                                zeroline=True, zerolinecolor='#ccc',
+                                range=[-max_abs * 1.3, max_abs * 1.3],
+                                tickfont=dict(size=7),
+                            ),
+                        )
+
+                        card_html = f'''
+                        <div style="background:white;border-radius:10px;padding:12px 12px 8px;margin:4px 0;box-shadow:0 1px 6px rgba(0,0,0,0.08);border-top:3px solid {pct_color};">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+                                <div>
+                                    <div style="font-weight:700;font-size:0.88rem;color:#1a1a2e;">{name}</div>
+                                    <div style="font-size:1.4rem;font-weight:700;color:#1a1a2e;line-height:1.1;">{price:.3f}</div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-size:1rem;font-weight:700;color:{pct_color};">{sign}{pct:.2f}%</div>
+                                    <div style="font-size:0.68rem;color:#888;">{'资金流入' if pct >= 0 else '资金流出'}</div>
+                                </div>
+                            </div>
+                            <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;margin-bottom:4px;">
+                                <div style="font-size:0.68rem;color:#888;">近30日净流入合计</div>
+                                <div style="font-size:1rem;font-weight:700;color:{'#1F4E79' if total_30d >= 0 else '#dc3545'};">{total_str}</div>
+                            </div>
+                        </div>
+                        '''
+                        st.markdown(card_html, unsafe_allow_html=True)
+                        st.plotly_chart(fig, use_container_width=True)
+
+        st.caption("💡 柱状图蓝色=资金流入，红色=资金流出；数据基于每日成交额与涨跌幅估算")
+
     # ==================== 财务分析 ====================
     elif page == "财务分析":
-        st.markdown("### 财务分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">📊 财务分析</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">多维度财报指标与估值分析</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         symbols_input = st.text_area("股票代码（每行一个）", placeholder="000001\n000002\n600000", height=100)
 
@@ -898,7 +1240,12 @@ def main():
 
     # ==================== 投资组合 ====================
     elif page == "投资组合":
-        st.markdown("### 投资组合优化")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">⚖️ 投资组合优化</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">均值-方差优化与风险平价模型</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         symbols_input = st.text_area("股票池（每行一个）", placeholder="000001\n000002\n600000\n000858", height=120)
 
@@ -977,7 +1324,12 @@ def main():
 
     # ==================== 风险分析 ====================
     elif page == "风险分析":
-        st.markdown("### 风险分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">🛡️ 风险分析</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">Altman Z-Score / Ohlson O-Score / M-Score 多维风控模型</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         symbols_input = st.text_area("股票代码（每行一个）", placeholder="000001\n000002\n600000", height=100)
         analysis_mode = st.radio("分析模式", ["综合风险分析", "联合风控分析"])
@@ -1250,7 +1602,12 @@ def main():
 
     # ==================== PDF年报分析 ====================
     elif page == "PDF年报分析":
-        st.markdown("### 综合年报分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">📄 PDF年报分析</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">年报文本风险解读与智能解析</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         tab1, tab2 = st.tabs(["🔍 综合年报分析", "📊 榜单统计"])
 
@@ -1442,7 +1799,12 @@ def main():
 
     # ==================== 公告解读 ====================
     elif page == "公告解读":
-        st.markdown("### 📋 公司公告解读")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">📋 公告解读</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">上市公司公告智能分类与摘要</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("""
         <div style="background:#f5f6f8;border-radius:12px;padding:15px;margin-bottom:20px;">
@@ -1574,7 +1936,12 @@ def main():
 
     # ==================== 多智能体协作 ====================
     elif page == "多智能体协作":
-        st.markdown("### AutoGen 多智能体协作分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">🤖 多智能体协作</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">AutoGen 框架下的智能体协作分析系统</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.info("""
         本系统使用 AutoGen 框架构建多智能体协作分析系统:
