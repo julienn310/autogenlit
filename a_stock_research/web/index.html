@@ -1,0 +1,2786 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoGen 金融分析系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Microsoft YaHei', sans-serif;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+        }
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+        }
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .metric-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        .status-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        .pdf-drop-zone {
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-color: #f8f9fa;
+        }
+        .pdf-drop-zone:hover, .pdf-drop-zone.drag-over {
+            border-color: #764ba2;
+            background-color: #e9ecef;
+        }
+        .pdf-drop-zone i {
+            color: #667eea;
+        }
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+        .analysis-result {
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin: 20px 0;
+        }
+        .sidebar {
+            background-color: #343a40;
+            color: white;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .sidebar .nav-link {
+            color: #adb5bd;
+            border-radius: 5px;
+            margin: 5px 0;
+        }
+        .sidebar .nav-link:hover {
+            background-color: #495057;
+            color: white;
+        }
+        .sidebar .nav-link.active {
+            background-color: #667eea;
+            color: white;
+        }
+        .loading-spinner {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .websocket-status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 0.8rem;
+        }
+        .websocket-connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .websocket-disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-chart-line me-2"></i>
+                AutoGen 金融分析系统
+            </a>
+            <div class="navbar-nav ms-auto">
+                <span class="navbar-text">
+                    <i class="fas fa-circle text-success me-1"></i>
+                    系统正常
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- 侧边栏 -->
+            <nav class="col-md-2 d-none d-md-block sidebar">
+                <div class="position-sticky">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link active" href="#" onclick="showSection('dashboard')">
+                                <i class="fas fa-tachometer-alt me-2"></i>
+                                仪表板
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showSection('analysis')">
+                                <i class="fas fa-chart-bar me-2"></i>
+                                财务分析
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showSection('portfolio')">
+                                <i class="fas fa-briefcase me-2"></i>
+                                投资组合
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showSection('collaboration')">
+                                <i class="fas fa-users me-2"></i>
+                                多智能体协作
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showSection('risk')">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                风险分析
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showSection('reports')">
+                                <i class="fas fa-file-alt me-2"></i>
+                                报告中心
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showSection('settings')">
+                                <i class="fas fa-cog me-2"></i>
+                                系统设置
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+
+            <!-- 主内容区 -->
+            <main class="col-md-10 ms-sm-auto px-md-4">
+                <!-- 仪表板 -->
+                <div id="dashboard-section" class="content-section">
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                        <h1 class="h2">仪表板</h1>
+                        <div class="btn-toolbar mb-2 mb-md-0">
+                            <div class="btn-group me-2">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshDashboard()">
+                                    <i class="fas fa-sync-alt me-1"></i>刷新
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 系统状态卡片 -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="card metric-card">
+                                <div class="card-body">
+                                    <div class="metric-value" id="active-tasks">0</div>
+                                    <div class="metric-label">活跃任务</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card metric-card">
+                                <div class="card-body">
+                                    <div class="metric-value" id="completed-tasks">0</div>
+                                    <div class="metric-label">已完成任务</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card metric-card">
+                                <div class="card-body">
+                                    <div class="metric-value" id="system-uptime">0s</div>
+                                    <div class="metric-label">系统运行时间</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card metric-card">
+                                <div class="card-body">
+                                    <div class="metric-value" id="api-requests">0</div>
+                                    <div class="metric-label">API请求数</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 图表区域 -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>任务完成趋势</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container">
+                                        <canvas id="taskChart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>系统资源使用</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="chart-container">
+                                        <canvas id="resourceChart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 最近任务 -->
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>最近分析任务</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-striped">
+                                            <thead>
+                                                <tr>
+                                                    <th>任务ID</th>
+                                                    <th>公司简称</th>
+                                                    <th>股票代码</th>
+                                                    <th>M-Score</th>
+                                                    <th>分析类型</th>
+                                                    <th>状态</th>
+                                                    <th>创建时间</th>
+                                                    <th>操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="recent-tasks-tbody">
+                                                <!-- 动态填充 -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 财务分析 -->
+                <div id="analysis-section" class="content-section" style="display: none;">
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                        <h1 class="h2">财务分析</h1>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>新建分析任务</h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="analysis-form">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="symbols" class="form-label">股票代码</label>
+                                                    <input type="text" class="form-control" id="symbols" placeholder="输入股票代码，如：AAPL" required>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="analysis-type" class="form-label">分析类型</label>
+                                                    <select class="form-select" id="analysis-type">
+                                                        <option value="comprehensive">综合分析</option>
+                                                        <option value="joint_risk">联合风控</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="export-format" class="form-label">导出格式</label>
+                                                    <select class="form-select" id="export-format">
+                                                        <option value="html">HTML</option>
+                                                        <option value="pdf" selected>PDF</option>
+                                                        <option value="excel">Excel</option>
+                                                        <option value="json">JSON</option>
+                                                        <option value="csv">CSV</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="mb-3">
+                                                    <label for="priority" class="form-label">优先级</label>
+                                                    <select class="form-select" id="priority">
+                                                        <option value="0">普通</option>
+                                                        <option value="1">高</option>
+                                                        <option value="2">紧急</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="fas fa-play me-2"></i>开始分析
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>分析模板</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="d-grid gap-2">
+                                        <button class="btn btn-outline-primary" onclick="loadTemplate('standard')">
+                                            标准分析模板
+                                        </button>
+                                        <button class="btn btn-outline-primary" onclick="loadTemplate('portfolio')">
+                                            投资组合分析模板
+                                        </button>
+                                        <button class="btn btn-outline-primary" onclick="loadTemplate('risk')">
+                                            风险评估模板
+                                        </button>
+                                        <button class="btn btn-outline-primary" onclick="loadTemplate('quick')">
+                                            快速分析模板
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 分析结果区域 -->
+                    <div id="analysis-results" class="mt-4" style="display: none;">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>分析结果</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="analysis-content">
+                                    <!-- 动态填充分析结果 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 投资组合分析 -->
+                <div id="portfolio-section" class="content-section" style="display: none;">
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                        <h1 class="h2">投资组合分析</h1>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>创建投资组合</h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="portfolio-form">
+                                        <div class="mb-3">
+                                            <label for="portfolio-symbols" class="form-label">股票代码列表</label>
+                                            <textarea class="form-control" id="portfolio-symbols" rows="3" placeholder="输入股票代码，每行一个：&#10;AAPL&#10;MSFT&#10;GOOG" required></textarea>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="portfolio-weights" class="form-label">权重配置</label>
+                                            <div id="weights-input-container">
+                                                <!-- 动态生成权重输入 -->
+                                            </div>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="fas fa-chart-pie me-2"></i>分析投资组合
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>投资组合优化</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label for="optimization-goal" class="form-label">优化目标</label>
+                                        <select class="form-select" id="optimization-goal">
+                                            <option value="sharpe">最大化夏普比率</option>
+                                            <option value="return">最大化收益率</option>
+                                            <option value="risk">最小化风险</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="risk-tolerance" class="form-label">风险承受度</label>
+                                        <input type="range" class="form-range" id="risk-tolerance" min="1" max="10" value="5">
+                                        <div class="d-flex justify-content-between">
+                                            <small>保守</small>
+                                            <small>激进</small>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-success w-100" onclick="optimizePortfolio()">
+                                        <i class="fas fa-magic me-2"></i>优化配置
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 风险分析 -->
+                <div id="risk-section" class="content-section" style="display: none;">
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                        <h1 class="h2">风险分析</h1>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>风险评估工具</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="risk-symbol" class="form-label">股票代码</label>
+                                                <input type="text" class="form-control" id="risk-symbol" placeholder="输入股票代码">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label for="risk-timeframe" class="form-label">时间范围</label>
+                                                <select class="form-select" id="risk-timeframe">
+                                                    <option value="1m">1个月</option>
+                                                    <option value="3m">3个月</option>
+                                                    <option value="6m">6个月</option>
+                                                    <option value="1y">1年</option>
+                                                    <option value="5y">5年</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-warning" onclick="analyzeRisk()">
+                                        <i class="fas fa-exclamation-triangle me-2"></i>进行风险分析
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PDF年报上传区域 -->
+                    <div class="row mt-4">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-file-pdf me-2"></i>PDF年报风险分析</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-8">
+                                            <div class="pdf-drop-zone" id="pdf-drop-zone">
+                                                <i class="fas fa-cloud-upload-alt fa-3x mb-3"></i>
+                                                <p class="mb-1">拖拽PDF文件到此处或点击选择</p>
+                                                <small class="text-muted">支持PDF格式的年度报告</small>
+                                                <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
+                                            </div>
+                                            <div id="pdf-file-name" class="mt-2 text-success" style="display: none;"></div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="mb-3">
+                                                <label for="pdf-company-name" class="form-label">公司名称（可选）</label>
+                                                <input type="text" class="form-control" id="pdf-company-name" placeholder="例如：贵州茅台">
+                                            </div>
+                                            <button class="btn btn-warning w-100" id="pdf-analyze-btn" onclick="analyzePdfRisk()" disabled>
+                                                <i class="fas fa-upload me-2"></i>上传并分析
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PDF分析进度 -->
+                    <div id="pdf-progress-section" class="row mt-4" style="display: none;">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0">PDF分析进度</h5>
+                                    <span id="pdf-progress-text" class="badge bg-primary">0%</span>
+                                </div>
+                                <div class="card-body">
+                                    <div class="progress" style="height: 25px;">
+                                        <div id="pdf-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                                    </div>
+                                    <p id="pdf-progress-step" class="mt-2 text-muted">准备上传...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 风险分析结果区域 -->
+                    <div id="risk-results" class="mt-4" style="display: none;">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>风险分析结果</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="risk-content">
+                                    <!-- 动态填充风险分析结果 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 报告中心 -->
+                <div id="reports-section" class="content-section" style="display: none;">
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                        <h1 class="h2">报告中心</h1>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>历史报告</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="table-responsive">
+                                        <table class="table table-striped">
+                                            <thead>
+                                                <tr>
+                                                    <th>报告名称</th>
+                                                    <th>股票代码</th>
+                                                    <th>生成时间</th>
+                                                    <th>格式</th>
+                                                    <th>操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="reports-tbody">
+                                                <!-- 动态填充 -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 多智能体协作 -->
+                <div id="collaboration-section" class="content-section" style="display: none;">
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                        <h1 class="h2">多智能体协作</h1>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-5">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-users me-2"></i>协作分析</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label for="collab-symbol" class="form-label">股票代码</label>
+                                        <input type="text" class="form-control" id="collab-symbol" placeholder="输入股票代码，如 000001">
+                                    </div>
+                                    <button class="btn btn-primary w-100" onclick="startCollaboration()">
+                                        <i class="fas fa-play me-2"></i>开始协作分析
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-7">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0"><i class="fas fa-comments me-2"></i>协作过程</h5>
+                                    <span id="collab-status" class="badge bg-secondary">等待开始</span>
+                                </div>
+                                <div class="card-body" id="agent-chat-container" style="max-height: 400px; overflow-y: auto;">
+                                    <div class="text-center text-muted py-5">
+                                        <i class="fas fa-comment-dots fa-3x mb-3"></i>
+                                        <p>输入股票代码并点击"开始协作分析"</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="collab-result-section" class="row mt-4" style="display: none;">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-check-circle me-2"></i>综合分析结果</h5>
+                                </div>
+                                <div class="card-body" id="collab-result-content">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 系统设置 -->
+                <div id="settings-section" class="content-section" style="display: none;">
+                    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                        <h1 class="h2">系统设置</h1>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>API配置</h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="api-config-form">
+                                        <div class="mb-3">
+                                            <label for="openai-api-key" class="form-label">MiniMax API Key</label>
+                                            <input type="password" class="form-control" id="openai-api-key" placeholder="输入MiniMax API密钥">
+                                            <small class="form-text text-muted">用于AI分析功能</small>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="tushare-token" class="form-label">Tushare Token (可选)</label>
+                                            <input type="password" class="form-control" id="tushare-token" placeholder="输入Tushare Token">
+                                            <small class="form-text text-muted">用于获取更完整的财务数据</small>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary">保存配置</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5>系统信息</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>API版本:</strong>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <span id="api-version">1.0.0</span>
+                                        </div>
+                                    </div>
+                                    <hr>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>数据库状态:</strong>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <span class="badge bg-success">正常</span>
+                                        </div>
+                                    </div>
+                                    <hr>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>缓存状态:</strong>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <span class="badge bg-success">正常</span>
+                                        </div>
+                                    </div>
+                                    <hr>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <strong>最后更新:</strong>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <span id="last-update">--</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- WebSocket状态指示器 -->
+    <div id="websocket-status" class="websocket-status websocket-disconnected">
+        <i class="fas fa-circle me-1"></i>
+        <span id="websocket-status-text">连接断开</span>
+    </div>
+
+    <!-- 加载动画 -->
+    <div id="loading-spinner" class="loading-spinner" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:9999; background:white; border-radius:15px; padding:30px 40px; box-shadow:0 10px 40px rgba(0,0,0,0.2); width:400px;">
+        <div style="text-align:center;">
+            <h4 style="color:#667eea; margin-bottom:18px;">
+                <i class="fas fa-chart-line me-2" style="animation:pulse 1.5s infinite;"></i>
+                <span id="loading-title-text">正在分析...</span>
+            </h4>
+            <p id="loading-status-text" style="color:#6c757d; font-size:15px; margin-bottom:18px;">
+                <span class="loading-dots">准备中</span>
+            </p>
+            <div style="display:flex; justify-content:center; gap:20px; margin-bottom:12px;">
+                <span id="badge-data" class="badge" style="background:#667eea; transition:all 0.3s;"><i class="fas fa-database me-1"></i>收集数据</span>
+                <span id="badge-calc" class="badge" style="background:#5a67d2; opacity:0.4; transition:all 0.3s;"><i class="fas fa-calculator me-1"></i>计算指标</span>
+                <span id="badge-result" class="badge" style="background:#764ba2; opacity:0.4; transition:all 0.3s;"><i class="fas fa-chart-pie me-1"></i>生成报告</span>
+            </div>
+            <div style="margin-top:12px;">
+                <i class="fas fa-spinner fa-spin" style="color:#667eea; font-size:22px;"></i>
+            </div>
+        </div>
+    </div>
+    <style>
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-3px); }
+        }
+        .loading-dots::after {
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        @keyframes dots {
+            0% { content: ''; }
+            25% { content: '.'; }
+            50% { content: '..'; }
+            75% { content: '...'; }
+            100% { content: ''; }
+        }
+    </style>
+
+    <!-- 错误消息容器 -->
+    <div id="error-container"></div>
+
+    <!-- 成功消息容器 -->
+    <div id="success-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 全局变量
+        let websocket = null;
+        let reconnectInterval = null;
+        let currentTaskId = null;
+        let taskChart = null;
+        let resourceChart = null;
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+            initializeWebSocket();
+            loadDashboardData();
+            // 初始化 Bootstrap tooltips
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.forEach(function (tooltipTriggerEl) {
+                new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+        });
+
+        // 初始化应用
+        function initializeApp() {
+            // 绑定表单提交事件
+            document.getElementById('analysis-form').addEventListener('submit', handleAnalysisSubmit);
+            document.getElementById('portfolio-form').addEventListener('submit', handlePortfolioSubmit);
+            document.getElementById('api-config-form').addEventListener('submit', handleApiConfigSubmit);
+
+            // 绑定股票代码输入事件
+            document.getElementById('portfolio-symbols').addEventListener('input', handlePortfolioSymbolsChange);
+
+            // 初始化图表
+            initializeCharts();
+        }
+
+        // 初始化WebSocket连接
+        function initializeWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            websocket = new WebSocket(wsUrl);
+
+            websocket.onopen = function() {
+                console.log('WebSocket连接已建立');
+                updateWebSocketStatus(true);
+            };
+
+            websocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+
+            websocket.onclose = function() {
+                console.log('WebSocket连接已关闭');
+                updateWebSocketStatus(false);
+                scheduleReconnect();
+            };
+
+            websocket.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+                updateWebSocketStatus(false);
+            };
+        }
+
+        // 处理WebSocket消息
+        function handleWebSocketMessage(data) {
+            switch(data.type) {
+                case 'task_update':
+                    handleTaskUpdate(data);
+                    break;
+                case 'system_notification':
+                    handleSystemNotification(data);
+                    break;
+                case 'pong':
+                    // 心跳响应
+                    break;
+                default:
+                    console.log('未知消息类型:', data.type);
+            }
+        }
+
+        // 处理任务更新
+        function handleTaskUpdate(data) {
+            const taskId = data.task_id;
+            const updateData = data.data;
+
+            if (currentTaskId === taskId) {
+                updateCurrentTaskProgress(updateData);
+            }
+
+            // 更新仪表板
+            updateDashboardWithTaskUpdate(taskId, updateData);
+        }
+
+        // 更新当前任务进度
+        function updateCurrentTaskProgress(updateData) {
+            const progress = updateData.progress || 0;
+            const step = updateData.step || '';
+
+            if (progress >= 100) {
+                hideLoadingSpinner();
+                showSuccessMessage('分析完成！');
+            } else {
+                showLoadingSpinner();
+                updateLoadingProgress(progress, step);
+            }
+        }
+
+        // 更新WebSocket状态显示
+        function updateWebSocketStatus(connected) {
+            const statusElement = document.getElementById('websocket-status');
+            const statusText = document.getElementById('websocket-status-text');
+
+            if (connected) {
+                statusElement.className = 'websocket-status websocket-connected';
+                statusText.textContent = '已连接';
+            } else {
+                statusElement.className = 'websocket-status websocket-disconnected';
+                statusText.textContent = '连接断开';
+            }
+        }
+
+        // 安排重连
+        function scheduleReconnect() {
+            if (reconnectInterval) {
+                clearInterval(reconnectInterval);
+            }
+
+            reconnectInterval = setInterval(() => {
+                console.log('尝试重新连接WebSocket...');
+                initializeWebSocket();
+            }, 5000);
+        }
+
+        // 显示页面部分
+        function showSection(sectionId) {
+            // 隐藏所有部分
+            const sections = document.querySelectorAll('.content-section');
+            sections.forEach(section => {
+                section.style.display = 'none';
+            });
+
+            // 显示指定部分
+            document.getElementById(sectionId + '-section').style.display = 'block';
+
+            // 更新侧边栏激活状态
+            const navLinks = document.querySelectorAll('.sidebar .nav-link');
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // 加载相应数据
+            switch(sectionId) {
+                case 'dashboard':
+                    loadDashboardData();
+                    break;
+                case 'reports':
+                    loadReportsData();
+                    break;
+            }
+        }
+
+        // 处理分析表单提交
+        function handleAnalysisSubmit(event) {
+            event.preventDefault();
+
+            const formData = {
+                symbols: [document.getElementById('symbols').value],
+                analysis_type: document.getElementById('analysis-type').value,
+                export_format: document.getElementById('export-format').value,
+                priority: parseInt(document.getElementById('priority').value)
+            };
+
+            submitAnalysisRequest(formData);
+        }
+
+        // 提交分析请求
+        async function submitAnalysisRequest(formData) {
+            showLoadingSpinner();
+
+            try {
+                const response = await fetch('/api/v1/analysis', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    const taskId = result.data?.task_id || result.request_id;
+                    currentTaskId = taskId;
+                    showSuccessMessage(`分析任务已创建，任务ID: ${taskId}`);
+
+                    // 订阅任务更新
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(JSON.stringify({
+                            type: 'subscribe_task',
+                            task_id: taskId
+                        }));
+                    }
+
+                    // 启动轮询检查任务状态
+                    pollTaskStatus(taskId);
+                } else {
+                    showErrorMessage(result.detail || '提交失败');
+                }
+            } catch (error) {
+                showErrorMessage('网络错误: ' + error.message);
+            }
+        }
+
+        // 处理投资组合表单提交
+        function handlePortfolioSubmit(event) {
+            event.preventDefault();
+            // 实现投资组合分析逻辑
+            showSuccessMessage('投资组合分析功能开发中...');
+        }
+
+        // 处理API配置表单提交
+        function handleApiConfigSubmit(event) {
+            event.preventDefault();
+            // 实现API配置保存逻辑
+            showSuccessMessage('配置已保存');
+        }
+
+        // 处理投资组合股票代码变化
+        function handlePortfolioSymbolsChange(event) {
+            const symbols = event.target.value.split('\\n').filter(s => s.trim());
+            const container = document.getElementById('weights-input-container');
+
+            container.innerHTML = '';
+            symbols.forEach(symbol => {
+                const weightInput = document.createElement('div');
+                weightInput.className = 'mb-2';
+                weightInput.innerHTML = `
+                    <label class="form-label">${symbol} 权重</label>
+                    <div class="input-group">
+                        <input type="number" class="form-control" min="0" max="1" step="0.01" value="${(1/symbols.length).toFixed(2)}">
+                        <span class="input-group-text">%</span>
+                    </div>
+                `;
+                container.appendChild(weightInput);
+            });
+        }
+
+        // 加载模板
+        function loadTemplate(templateType) {
+            const templates = {
+                standard: {
+                    symbols: 'AAPL',
+                    analysis_type: 'comprehensive',
+                    export_format: 'pdf'
+                },
+                portfolio: {
+                    symbols: 'AAPL,MSFT,GOOG',
+                    analysis_type: 'portfolio',
+                    export_format: 'excel'
+                },
+                risk: {
+                    symbols: 'AAPL',
+                    analysis_type: 'risk',
+                    export_format: 'csv'
+                },
+                quick: {
+                    symbols: 'AAPL',
+                    analysis_type: 'quick',
+                    export_format: 'html'
+                }
+            };
+
+            const template = templates[templateType];
+            if (template) {
+                document.getElementById('symbols').value = template.symbols;
+                document.getElementById('analysis-type').value = template.analysis_type;
+                document.getElementById('export-format').value = template.export_format;
+            }
+        }
+
+        // 分析风险
+        function analyzeRisk() {
+            const symbol = document.getElementById('risk-symbol').value;
+            if (!symbol) {
+                showErrorMessage('请输入股票代码');
+                return;
+            }
+
+            // 切换到分析页面显示结果
+            showSection('analysis');
+            document.getElementById('analysis-section').style.display = 'block';
+
+            // 使用相同的分析请求流程
+            submitAnalysisRequest({
+                symbols: [symbol],
+                analysis_type: 'risk',
+                export_formats: ['html'],
+                priority: 0
+            });
+        }
+
+        // 优化投资组合
+        async function optimizePortfolio() {
+            const symbolsText = document.getElementById('portfolio-symbols').value;
+            const symbols = symbolsText.split('\n').map(s => s.trim()).filter(s => s);
+
+            if (symbols.length < 2) {
+                showErrorMessage('至少需要输入2只股票才能进行组合优化');
+                return;
+            }
+
+            const goalSelect = document.getElementById('optimization-goal');
+            const goal = goalSelect.value;
+
+            // 映射前端目标到后端目标
+            const objectiveMap = {
+                'share': 'max_sharpe',
+                'return': 'max_sharpe',
+                'risk': 'min_variance'
+            };
+            const objective = objectiveMap[goal] || 'max_sharpe';
+
+            showLoadingSpinner('正在优化投资组合...');
+
+            try {
+                const response = await fetch('/api/v1/optimize/portfolio', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        symbols: symbols,
+                        objective: objective,
+                        period: '1y',
+                        risk_free_rate: 0.03,
+                        cov_method: 'lw'
+                    })
+                });
+
+                hideLoadingSpinner();
+                const result = await response.json();
+
+                if (result.code !== 200) {
+                    showErrorMessage(result.message || result.error_message || '优化失败');
+                    return;
+                }
+
+                const data = result.data;
+                const weightsHtml = Object.entries(data.weights)
+                    .map(([sym, w]) => `<li class="list-group-item d-flex justify-content-between align-items-center">
+                        <strong>${sym}</strong>
+                        <span class="badge bg-primary rounded-pill">${typeof w === 'string' ? w : (w * 100).toFixed(2) + '%'}</span>
+                    </li>`).join('');
+
+                const metrics = data.portfolio_metrics;
+                const metricsHtml = `
+                    <div class="row text-center">
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">年化收益</div>
+                                <div class="fw-bold text-success">${metrics.expected_return || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">年化波动</div>
+                                <div class="fw-bold text-danger">${metrics.volatility || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">夏普比率</div>
+                                <div class="fw-bold">${metrics.sharpe_ratio || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">Sortino</div>
+                                <div class="fw-bold">${metrics.sortino_ratio || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">Calmar</div>
+                                <div class="fw-bold">${metrics.calmar_ratio || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">Treynor</div>
+                                <div class="fw-bold">${metrics.treynor_ratio || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">Omega</div>
+                                <div class="fw-bold">${metrics.omega_ratio || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">下行标准差</div>
+                                <div class="fw-bold">${metrics.downside_dev || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">95% VaR</div>
+                                <div class="fw-bold text-warning">${metrics.var_95 || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">最大回撤</div>
+                                <div class="fw-bold text-danger">${metrics.max_drawdown || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <div class="border rounded p-2">
+                                <div class="text-muted small">优化耗时</div>
+                                <div class="fw-bold">${data.optimization_time || '-'}s</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const resultHtml = `
+                    <div class="card mt-3">
+                        <div class="card-header bg-success text-white">
+                            <h5 class="mb-0"><i class="fas fa-chart-pie me-2"></i>优化结果</h5>
+                        </div>
+                        <div class="card-body">
+                            <h6 class="text-muted mb-3">最优权重配置</h6>
+                            <ul class="list-group mb-3">${weightsHtml}</ul>
+                            <h6 class="text-muted mb-3">组合风险收益指标</h6>
+                            ${metricsHtml}
+                        </div>
+                    </div>
+                `;
+
+                // 找到 portfolio section 的 card-body
+                const portfolioSection = document.getElementById('portfolio-section');
+                const existingResult = portfolioSection.querySelector('.card.mt-3');
+                if (existingResult) existingResult.remove();
+
+                // 插入结果
+                const colMd8 = portfolioSection.querySelector('.col-md-8 .card .card-body');
+                if (colMd8) {
+                    colMd8.insertAdjacentHTML('beforeend', resultHtml);
+                }
+
+                showSuccessMessage(`优化完成！耗时 ${data.optimization_time || 0}s`);
+
+            } catch (error) {
+                hideLoadingSpinner();
+                showErrorMessage('网络错误: ' + error.message);
+            }
+        }
+
+        // PDF拖拽上传处理
+        let selectedPdfFile = null;  // 存储选中的PDF文件
+
+        function initPdfUpload() {
+            const dropZone = document.getElementById('pdf-drop-zone');
+            const fileInput = document.getElementById('pdf-file-input');
+            const analyzeBtn = document.getElementById('pdf-analyze-btn');
+            const fileNameDisplay = document.getElementById('pdf-file-name');
+
+            if (!dropZone || !fileInput) {
+                console.error('Missing elements:', {dropZone, fileInput});
+                return;
+            }
+
+            // 点击上传区域
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            // 文件选择
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    selectedPdfFile = e.target.files[0];
+                    handlePdfFile(selectedPdfFile);
+                }
+            });
+
+            // 拖拽事件
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                if (e.dataTransfer.files.length > 0) {
+                    selectedPdfFile = e.dataTransfer.files[0];
+                    handlePdfFile(selectedPdfFile);
+                }
+            });
+
+            function handlePdfFile(file) {
+                console.log('handlePdfFile called, file:', file);
+                if (!file.name.endsWith('.pdf')) {
+                    showErrorMessage('请上传PDF格式文件');
+                    return;
+                }
+                fileNameDisplay.textContent = `已选择: ${file.name}`;
+                fileNameDisplay.style.display = 'block';
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        // 分析PDF风险
+        let pdfPollInterval = null;
+
+        async function analyzePdfRisk() {
+            const companyName = document.getElementById('pdf-company-name').value;
+            const progressSection = document.getElementById('pdf-progress-section');
+            const progressBar = document.getElementById('pdf-progress-bar');
+            const progressText = document.getElementById('pdf-progress-text');
+            const progressStep = document.getElementById('pdf-progress-step');
+
+            console.log('analyzePdfRisk called, selectedPdfFile:', selectedPdfFile);
+
+            if (!selectedPdfFile) {
+                showErrorMessage('请先选择PDF文件');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', selectedPdfFile);
+            formData.append('company_name', companyName);
+
+            // 显示进度区域
+            progressSection.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressText.textContent = '0%';
+            progressStep.textContent = '正在上传文件...';
+
+            try {
+                const response = await fetch('/api/v1/risk/analyze-pdf', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (result.code !== 200) {
+                    showErrorMessage(result.message || '创建任务失败');
+                    return;
+                }
+
+                const taskId = result.data.task_id;
+
+                // 轮询进度
+                if (pdfPollInterval) clearInterval(pdfPollInterval);
+                pdfPollInterval = setInterval(async () => {
+                    try {
+                        const statusResponse = await fetch(`/api/v1/risk/${taskId}`);
+                        const statusResult = await statusResponse.json();
+
+                        if (statusResult.code !== 200) {
+                            clearInterval(pdfPollInterval);
+                            showErrorMessage('获取进度失败');
+                            return;
+                        }
+
+                        const taskData = statusResult.data;
+                        progressBar.style.width = taskData.progress + '%';
+                        progressText.textContent = taskData.progress + '%';
+                        progressStep.textContent = taskData.step;
+
+                        if (taskData.status === 'completed') {
+                            clearInterval(pdfPollInterval);
+                            displayPdfAnalysisResult(taskData.result);
+                            progressSection.style.display = 'none';
+                        } else if (taskData.status === 'failed') {
+                            clearInterval(pdfPollInterval);
+                            showErrorMessage('分析失败: ' + (taskData.error || '未知错误'));
+                            progressSection.style.display = 'none';
+                        }
+                    } catch (error) {
+                        console.error('轮询进度失败:', error);
+                    }
+                }, 1000);
+
+            } catch (error) {
+                console.error('上传失败:', error);
+                showErrorMessage('上传失败，请稍后重试');
+            }
+        }
+
+        // 显示PDF分析结果
+        function displayPdfAnalysisResult(result) {
+            const riskResults = document.getElementById('risk-results');
+            const riskContent = document.getElementById('risk-content');
+
+            console.log('PDF analysis result:', result);
+
+            if (!result) {
+                showErrorMessage('分析结果为空');
+                return;
+            }
+
+            if (!result.analysis) {
+                showErrorMessage('分析内容为空: ' + JSON.stringify(result));
+                return;
+            }
+
+            riskContent.innerHTML = `
+                <div class="alert alert-info mb-3">
+                    <strong>公司：</strong>${result.company_name || '未知'}<br>
+                    <small class="text-muted">分析完成时间：${new Date().toLocaleString()}</small>
+                </div>
+                <div class="pdf-analysis-result">
+                    ${formatAnalysisText(result.analysis)}
+                </div>
+            `;
+
+            // 添加样式
+            const style = document.createElement('style');
+            style.textContent = `
+                .pdf-analysis-result {
+                    font-family: 'Microsoft YaHei', sans-serif;
+                    line-height: 1.8;
+                    color: #333;
+                }
+                .pdf-analysis-result .section-title {
+                    color: #764ba2;
+                    font-weight: bold;
+                    font-size: 1.1em;
+                    margin-top: 15px;
+                    padding: 8px 15px;
+                    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+                    border-left: 4px solid #667eea;
+                    border-radius: 4px;
+                }
+                .pdf-analysis-result .risk-item {
+                    padding: 10px 15px;
+                    margin: 8px 0;
+                    background-color: #f8f9fa;
+                    border-radius: 6px;
+                    border-left: 3px solid #667eea;
+                }
+                .pdf-analysis-result .citation {
+                    color: #764ba2;
+                    font-weight: bold;
+                    background-color: #f0e6ff;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                }
+                .pdf-analysis-result .risk-high {
+                    border-left-color: #dc3545;
+                    background-color: #fff5f5;
+                }
+                .pdf-analysis-result .risk-medium {
+                    border-left-color: #ffc107;
+                    background-color: #fffbf0;
+                }
+                .pdf-analysis-result .risk-low {
+                    border-left-color: #28a745;
+                    background-color: #f0fff0;
+                }
+                .pdf-analysis-result .key-metric {
+                    font-weight: bold;
+                    color: #667eea;
+                }
+            `;
+            document.head.appendChild(style);
+
+            riskResults.style.display = 'block';
+            showSuccessMessage('PDF年报风险分析完成');
+        }
+
+        // 格式化分析文本
+        function formatAnalysisText(text) {
+            if (!text) return '<p class="text-muted">分析结果为空</p>';
+
+            // 处理页码标注
+            text = text.replace(/【第(\d+)页】/g, '<span class="citation">【第$1页】</span>');
+
+            // 将文本按行分割处理
+            const lines = text.split('\n');
+            let html = '';
+            let inSection = false;
+            let sectionContent = [];
+
+            for (let line of lines) {
+                line = line.trim();
+                if (!line) continue;
+
+                // 检测是否是标题行（一、二、三、四 或者 核心债务、偿债能力等）
+                if (/^[一二三四]、/.test(line) || /^(核心债务|偿债能力|风险点|综合评级|关键指标)/.test(line)) {
+                    // 输出之前的内容
+                    if (sectionContent.length > 0) {
+                        html += '<div class="risk-item">' + sectionContent.join('<br>') + '</div>';
+                        sectionContent = [];
+                    }
+                    html += '<div class="section-title">' + line + '</div>';
+                    inSection = true;
+                }
+                // 检测风险评级行
+                else if (/风险评级|风险等级|综合评级/.test(line) || /极高风险|高风险|中风险|低风险/.test(line)) {
+                    if (sectionContent.length > 0) {
+                        html += '<div class="risk-item">' + sectionContent.join('<br>') + '</div>';
+                        sectionContent = [];
+                    }
+                    // 根据风险等级添加样式
+                    let riskClass = '';
+                    if (/极高风险|高风险/.test(line)) riskClass = 'risk-high';
+                    else if (/中风险/.test(line)) riskClass = 'risk-medium';
+                    else if (/低风险/.test(line)) riskClass = 'risk-low';
+
+                    html += '<div class="risk-item ' + riskClass + '"><strong>' + line + '</strong></div>';
+                }
+                // 普通内容行
+                else {
+                    if (inSection) {
+                        sectionContent.push(line);
+                    } else {
+                        html += '<p>' + line + '</p>';
+                    }
+                }
+            }
+
+            // 输出剩余内容
+            if (sectionContent.length > 0) {
+                html += '<div class="risk-item">' + sectionContent.join('<br>') + '</div>';
+            }
+
+            return html || '<p>' + text.replace(/\n/g, '<br>') + '</p>';
+        }
+
+        // 多智能体协作功能
+        const AGENT_COLORS = {
+            'user_proxy': '#6c757d',
+            'data_analyst': '#0d6efd',
+            'financial_analyst': '#198754',
+            'risk_analyst': '#fd7e14',
+            'investment_advisor': '#764ba2'
+        };
+
+        const AGENT_NAMES = {
+            'user_proxy': '系统',
+            'data_analyst': '数据分析师',
+            'financial_analyst': '财务分析师',
+            'risk_analyst': '风险分析师',
+            'investment_advisor': '投资顾问'
+        };
+
+        function addAgentMessage(agent, message, isTyping = false) {
+            const container = document.getElementById('agent-chat-container');
+            const color = AGENT_COLORS[agent] || '#6c757d';
+            const name = AGENT_NAMES[agent] || agent;
+
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'agent-message mb-3 p-3 rounded';
+
+            if (isTyping) {
+                msgDiv.innerHTML = `
+                    <div class="d-flex align-items-center">
+                        <div class="agent-avatar me-2" style="background-color: ${color}; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold;">${name[0]}</div>
+                        <div>
+                            <strong style="color: ${color}">${name}</strong>
+                            <span class="typing-indicator ms-2">
+                                <span class="dots">...</span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-muted">正在思考...</div>
+                `;
+                container.appendChild(msgDiv);
+                container.scrollTop = container.scrollHeight;
+                return msgDiv;
+            }
+
+            // 处理消息中的换行和引用标注
+            const formattedMessage = message
+                .replace(/\n/g, '<br>')
+                .replace(/【第(\d+)页】/g, '<span class="citation">【第$1页】</span>');
+
+            msgDiv.innerHTML = `
+                <div class="d-flex align-items-start">
+                    <div class="agent-avatar me-2" style="background-color: ${color}; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold;">${name[0]}</div>
+                    <div style="flex: 1;">
+                        <div class="d-flex justify-content-between">
+                            <strong style="color: ${color}">${name}</strong>
+                            <small class="text-muted">${new Date().toLocaleTimeString()}</small>
+                        </div>
+                        <div class="mt-2" style="line-height: 1.6;">${formattedMessage}</div>
+                    </div>
+                </div>
+            `;
+
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+            return msgDiv;
+        }
+
+        async function startCollaboration() {
+            const symbol = document.getElementById('collab-symbol').value.trim();
+            if (!symbol) {
+                showErrorMessage('请输入股票代码');
+                return;
+            }
+
+            const container = document.getElementById('agent-chat-container');
+            const statusBadge = document.getElementById('collab-status');
+
+            // 清空并显示开始状态
+            container.innerHTML = '';
+            statusBadge.textContent = '分析中...';
+            statusBadge.className = 'badge bg-primary';
+
+            // 模拟多智能体协作讨论
+            const discussionSteps = [
+                { agent: 'user_proxy', message: `请各位分析师协助分析股票 ${symbol} 的投资价值` },
+                { agent: 'data_analyst', message: `我正在获取 ${symbol} 的基本信息和财务数据...\n\n已获取：公司基本信息、市值、PE、PB等估值指标，以及历史行情数据。数据完整，可进入深入分析阶段。` },
+                { agent: 'financial_analyst', message: `基于数据分析师提供的信息，我对 ${symbol} 的财务状况进行分析：\n\n• 盈利能力：ROE处于行业中上水平\n• 偿债能力：资产负债率合理\n• 运营效率：毛利率稳定\n\n总体财务状况良好，但需关注应收账款周转情况。` },
+                { agent: 'risk_analyst', message: `我从风险角度补充分析：\n\n• 波动率：处于历史中等水平\n• 最大回撤：可接受范围\n• 夏普比率：大于1，风险调整收益较好\n• M-Score：-2.1，财务未显示操纵迹象\n\n风险因素在可控范围内。` },
+                { agent: 'investment_advisor', message: `综合各位的观点，我对 ${symbol} 做最终评估：\n\n【投资建议】\n• 风险等级：中等\n• 建议：可以关注\n• 目标价位：当前价格有上涨空间\n\n各位分析师的协作讨论已完成，最终给出"建议关注"的投资评级。` }
+            ];
+
+            // 逐条显示消息
+            for (let i = 0; i < discussionSteps.length; i++) {
+                const step = discussionSteps[i];
+                const typingMsg = addAgentMessage(step.agent, '', true);
+
+                await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 400));
+
+                // 替换typing状态为实际消息
+                typingMsg.outerHTML = '';
+                addAgentMessage(step.agent, step.message);
+
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            statusBadge.textContent = '已完成';
+            statusBadge.className = 'badge bg-success';
+
+            // 显示结果区域
+            document.getElementById('collab-result-section').style.display = 'flex';
+            document.getElementById('collab-result-content').innerHTML = `
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle me-2"></i>
+                    <strong>${symbol}</strong> 多智能体协作分析完成
+                </div>
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center p-3 border rounded">
+                            <div class="text-success fw-bold">建议关注</div>
+                            <small class="text-muted">投资评级</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center p-3 border rounded">
+                            <div class="text-primary fw-bold">中等</div>
+                            <small class="text-muted">风险等级</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center p-3 border rounded">
+                            <div class="text-warning fw-bold">中等</div>
+                            <small class="text-muted">波动率</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center p-3 border rounded">
+                            <div class="text-info fw-bold">-2.1</div>
+                            <small class="text-muted">M-Score</small>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // CSS for typing animation
+        const style = document.createElement('style');
+        style.textContent = `
+            .agent-message {
+                background-color: #f8f9fa;
+                border-left: 3px solid #667eea;
+            }
+            .agent-message:hover {
+                background-color: #e9ecef;
+            }
+            .typing-indicator .dots {
+                animation: typing 1s infinite;
+            }
+            @keyframes typing {
+                0%, 20% { opacity: 0.2; }
+                50% { opacity: 1; }
+                100% { opacity: 0.2; }
+            }
+            .citation {
+                color: #764ba2;
+                font-weight: bold;
+                background-color: #f0e6ff;
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+        `;
+        document.head.appendChild(style);
+
+        // 页面加载时初始化PDF上传
+        document.addEventListener('DOMContentLoaded', initPdfUpload);
+
+        // 加载仪表板数据
+        async function loadDashboardData() {
+            try {
+                // 获取系统状态
+                const statusResponse = await fetch('/api/v1/system/status');
+                const statusResult = await statusResponse.json();
+                const statusData = statusResult.data || statusResult;
+
+                // 更新仪表板指标
+                document.getElementById('active-tasks').textContent = statusData.active_tasks;
+                document.getElementById('completed-tasks').textContent = statusData.completed_tasks;
+                document.getElementById('system-uptime').textContent = formatUptime(statusData.uptime);
+
+                // 获取最近任务
+                const tasksResponse = await fetch('/api/v1/analysis?limit=10');
+                const tasksResult = await tasksResponse.json();
+                const tasksData = tasksResult.data || tasksResult.tasks || [];
+
+                updateRecentTasksTable(tasksData);
+                updateTaskChart(tasksData);
+
+            } catch (error) {
+                console.error('加载仪表板数据失败:', error);
+            }
+        }
+
+        // 更新最近任务表格
+        function updateRecentTasksTable(tasks) {
+            const tbody = document.getElementById('recent-tasks-tbody');
+            tbody.innerHTML = '';
+
+            // 处理API返回的不同数据格式
+            const taskArray = Array.isArray(tasks) ? tasks :
+                             (tasks.data ? tasks.data : (tasks.tasks || []));
+
+            taskArray.forEach(task => {
+                const row = document.createElement('tr');
+                const taskId = task.request?.id || task.id || '';
+                const symbols = task.request?.symbols?.join(', ') || (Array.isArray(task.symbols) ? task.symbols.join(', ') : task.symbols || '');
+                const analysisType = task.request?.analysis_type || task.analysis_type || '';
+                const status = task.status || '';
+                const createdAt = task.request?.created_at || task.created_at || '';
+                const result = task.result && task.result[0] ? task.result[0] : null;
+                const companyName = result?.name || '-';
+                const mScore = result?.risk_metrics?.m_score || '-';
+
+                row.innerHTML = `
+                    <td>${taskId.substring(0, 8)}...</td>
+                    <td>${companyName}</td>
+                    <td>${symbols}</td>
+                    <td>${mScore}</td>
+                    <td>${analysisType}</td>
+                    <td>${getStatusBadge(status)}</td>
+                    <td>${formatDateTime(createdAt)}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="viewTaskDetails('${taskId}')">
+                            查看
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // 获取状态徽章
+        function getStatusBadge(status) {
+            const badges = {
+                'pending': '<span class="badge bg-warning">待处理</span>',
+                'running': '<span class="badge bg-info">运行中</span>',
+                'completed': '<span class="badge bg-success">已完成</span>',
+                'failed': '<span class="badge bg-danger">失败</span>',
+                'cancelled': '<span class="badge bg-secondary">已取消</span>'
+            };
+            return badges[status] || '<span class="badge bg-secondary">未知</span>';
+        }
+
+        // 初始化图表
+        function initializeCharts() {
+            // 任务完成趋势图
+            const taskCtx = document.getElementById('taskChart').getContext('2d');
+            taskChart = new Chart(taskCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '完成任务数',
+                        data: [],
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+
+            // 系统资源使用图
+            const resourceCtx = document.getElementById('resourceChart').getContext('2d');
+            resourceChart = new Chart(resourceCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['CPU使用率', '内存使用率', '磁盘使用率'],
+                    datasets: [{
+                        data: [0, 0, 0],
+                        backgroundColor: [
+                            'rgb(255, 99, 132)',
+                            'rgb(54, 162, 235)',
+                            'rgb(255, 205, 86)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
+
+        // 更新任务图表
+        function updateTaskChart(tasks) {
+            // 处理API返回的不同数据格式
+            const taskArray = Array.isArray(tasks) ? tasks :
+                             (tasks.data ? tasks.data : (tasks.tasks || []));
+
+            // 简化实现，按天统计完成任务
+            const dailyStats = {};
+            taskArray.forEach(task => {
+                const status = task.status || '';
+                const completedAt = task.completed_at || '';
+                if (status === 'completed' && completedAt) {
+                    const date = new Date(completedAt).toLocaleDateString();
+                    dailyStats[date] = (dailyStats[date] || 0) + 1;
+                }
+            });
+
+            const labels = Object.keys(dailyStats).sort();
+            const data = labels.map(label => dailyStats[label]);
+
+            if (taskChart) {
+                taskChart.data.labels = labels;
+                taskChart.data.datasets[0].data = data;
+                taskChart.update();
+            }
+        }
+
+        // 更新仪表板任务更新
+        function updateDashboardWithTaskUpdate(taskId, updateData) {
+            // 实时更新仪表板显示
+            if (updateData.status === 'completed') {
+                loadDashboardData();
+            }
+        }
+
+        // 刷新仪表板
+        function refreshDashboard() {
+            loadDashboardData();
+            showSuccessMessage('仪表板已刷新');
+        }
+
+        // 查看任务详情
+        async function viewTaskDetails(taskId) {
+            try {
+                const response = await fetch(`/api/v1/analysis/${taskId}`);
+                const taskData = await response.json();
+
+                if (response.ok) {
+                    // 显示任务详情对话框
+                    alert(`任务详情:\\nID: ${taskData.request.id}\\n状态: ${taskData.status}\\n进度: ${taskData.progress}%`);
+                } else {
+                    showErrorMessage('获取任务详情失败');
+                }
+            } catch (error) {
+                showErrorMessage('网络错误: ' + error.message);
+            }
+        }
+
+        // 加载报告数据
+        async function loadReportsData() {
+            try {
+                const response = await fetch('/api/v1/analysis?limit=50');
+                const result = await response.json();
+                const tasks = result.data || [];
+
+                const reportsList = document.getElementById('reports-list');
+                if (!reportsList) return;
+
+                if (tasks.length === 0) {
+                    reportsList.innerHTML = '<p class="text-muted text-center">暂无报告记录</p>';
+                    return;
+                }
+
+                let html = '<div class="row">';
+                tasks.forEach(task => {
+                    if (!task.result) return;
+                    const r = task.result[0] || {};
+                    html += `
+                        <div class="col-md-6 mb-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6 class="card-title">${r.name || r.symbol || ''} (${r.symbol || ''})</h6>
+                                    <p class="card-text small">
+                                        <strong>股价:</strong> ${r.price || '-'} |
+                                        <strong>ROE:</strong> ${r.financial_metrics?.roe || '-'}
+                                    </p>
+                                    <p class="card-text small">
+                                        <strong>M-Score:</strong> ${r.risk_metrics?.m_score || '-'} |
+                                        <strong>结论:</strong> ${r.risk_metrics?.m_score_interpretation || '-'}
+                                    </p>
+                                    <small class="text-muted">${task.completed_at || ''}</small>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                reportsList.innerHTML = html;
+
+            } catch (error) {
+                console.error('加载报告数据失败:', error);
+            }
+        }
+
+        // 显示加载动画
+        // 加载阶段配置
+        const LOADING_STAGES = {
+            portfolio: [
+                { badgeId: 'badge-data',   text: '收集股票数据...',  delay: 300 },
+                { badgeId: 'badge-calc',   text: '计算协方差矩阵...', delay: 600 },
+                { badgeId: 'badge-result', text: '求解最优权重...',   delay: 500 },
+            ],
+            analysis: [
+                { badgeId: 'badge-data',   text: '收集数据...',      delay: 400 },
+                { badgeId: 'badge-calc',   text: '计算指标...',      delay: 500 },
+                { badgeId: 'badge-result', text: '生成报告...',      delay: 400 },
+            ]
+        };
+
+        let _loadingTimer = null;
+        let _loadingPhase = 'idle';
+
+        function showLoadingSpinner(title) {
+            title = title || '正在分析...';
+            const spinner = document.getElementById('loading-spinner');
+            const statusText = document.getElementById('loading-status-text');
+            const titleText = document.getElementById('loading-title-text');
+
+            _stopLoadingAnimation();
+
+            // 重置徽章状态
+            ['badge-data', 'badge-calc', 'badge-result'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) { el.style.opacity = '0.4'; el.style.transform = 'scale(0.95)'; el.style.boxShadow = ''; }
+            });
+
+            spinner.style.display = 'block';
+            titleText.textContent = title;
+            statusText.innerHTML = '<span class="loading-dots">准备中</span>';
+
+            // 根据标题选择动画
+            if (title.includes('投资组合')) {
+                _runBadgeAnimation('portfolio');
+            } else {
+                _runBadgeAnimation('analysis');
+            }
+        }
+
+        function _stopLoadingAnimation() {
+            if (_loadingTimer) { clearTimeout(_loadingTimer); _loadingTimer = null; }
+            _loadingPhase = 'idle';
+        }
+
+        // 徽章顺序高亮动画
+        function _runBadgeAnimation(stageKey) {
+            const stages = LOADING_STAGES[stageKey];
+            if (!stages) return;
+            _loadingPhase = 'running';
+            let cumulativeDelay = 0;
+
+            stages.forEach((stage, index) => {
+                cumulativeDelay += stage.delay;
+                _loadingTimer = setTimeout(() => {
+                    if (_loadingPhase !== 'running') return;
+                    document.querySelectorAll('.badge').forEach(b => {
+                        b.style.opacity = '0.4';
+                        b.style.transform = 'scale(0.95)';
+                        b.style.boxShadow = '';
+                    });
+                    const el = document.getElementById(stage.badgeId);
+                    if (el) {
+                        el.style.opacity = '1';
+                        el.style.transform = 'scale(1.1)';
+                        el.style.boxShadow = '0 2px 12px rgba(102,126,234,0.5)';
+                    }
+                    document.getElementById('loading-status-text').innerHTML = `<span class="loading-dots">${stage.text}</span>`;
+                }, cumulativeDelay);
+            });
+        }
+
+        // 隐藏加载动画
+        function hideLoadingSpinner() {
+            _stopLoadingAnimation();
+            const spinner = document.getElementById('loading-spinner');
+            const statusText = document.getElementById('loading-status-text');
+
+            statusText.innerHTML = '&#10003; <strong style="color:#667eea;">分析完成</strong>';
+            document.querySelectorAll('.badge').forEach(b => {
+                b.style.opacity = '0.4';
+                b.style.transform = 'scale(0.95)';
+            });
+
+            setTimeout(() => {
+                spinner.style.display = 'none';
+                document.querySelectorAll('.badge').forEach(b => {
+                    b.style.opacity = '';
+                    b.style.transform = '';
+                    b.style.boxShadow = '';
+                });
+            }, 600);
+        }
+
+        // 更新加载进度（外部调用）
+        function updateLoadingProgress(progress, step) {
+            if (_loadingPhase === 'running') return;
+            const statusText = document.getElementById('loading-status-text');
+            if (step) statusText.innerHTML = `<span class="loading-dots">${step}</span>`;
+        }
+
+        // 显示错误消息
+        function showErrorMessage(message) {
+            const container = document.getElementById('error-container');
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.innerHTML = `
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                ${message}
+                <button type="button" class="btn-close float-end" onclick="this.parentElement.remove()"></button>
+            `;
+            container.appendChild(errorDiv);
+
+            // 5秒后自动移除
+            setTimeout(() => {
+                if (errorDiv.parentElement) {
+                    errorDiv.remove();
+                }
+            }, 5000);
+        }
+
+        // 显示成功消息
+        function showSuccessMessage(message) {
+            const container = document.getElementById('success-container');
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success-message';
+            successDiv.innerHTML = `
+                <i class="fas fa-check-circle me-2"></i>
+                ${message}
+                <button type="button" class="btn-close float-end" onclick="this.parentElement.remove()"></button>
+            `;
+            container.appendChild(successDiv);
+
+            // 3秒后自动移除
+            setTimeout(() => {
+                if (successDiv.parentElement) {
+                    successDiv.remove();
+                }
+            }, 3000);
+        }
+
+        // 格式化时间
+        function formatDateTime(dateTimeString) {
+            const date = new Date(dateTimeString);
+            return date.toLocaleString('zh-CN');
+        }
+
+        // 格式化运行时间
+        function formatUptime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+
+            if (hours > 0) {
+                return `${hours}h ${minutes}m ${secs}s`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        }
+
+        // 轮询检查任务状态
+        async function pollTaskStatus(taskId) {
+            const maxAttempts = 60;  // 最多60次
+            let attempts = 0;
+
+            const poll = async () => {
+                if (attempts >= maxAttempts) {
+                    hideLoadingSpinner();
+                    showErrorMessage('任务超时');
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/v1/analysis/${taskId}`);
+                    const result = await response.json();
+
+                    if (result.code === 200) {
+                        const task = result.data;
+
+                        if (task.status === 'completed') {
+                            hideLoadingSpinner();
+                            showSuccessMessage('分析完成！');
+                            // 获取结果
+                            const resultResponse = await fetch(`/api/v1/analysis/${taskId}/result`);
+                            const resultData = await resultResponse.json();
+                            // 根据分析类型选择显示函数
+                            if (task.analysis_type === 'joint_risk') {
+                                displayJointRiskResult(resultData);
+                            } else {
+                                displayAnalysisResult(resultData);
+                            }
+                            return;
+                        } else if (task.status === 'failed') {
+                            hideLoadingSpinner();
+                            showErrorMessage('分析失败: ' + (task.error || '未知错误'));
+                            return;
+                        }
+                        // 更新进度条
+                        const progress = task.progress || (attempts / maxAttempts * 100);
+                        updateLoadingProgress(progress, task.step || '分析中...');
+                        // 继续轮询
+                        attempts++;
+                        setTimeout(poll, 1000);
+                    }
+                } catch (error) {
+                    console.error('轮询错误:', error);
+                    attempts++;
+                    setTimeout(poll, 2000);
+                }
+            };
+
+            poll();
+        }
+
+        // 显示分析结果
+        function displayAnalysisResult(resultData) {
+            const data = resultData.data;
+            if (!data || !data.length) return;
+
+            const headerGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+
+            let html = '';
+            data.forEach(stock => {
+                const fm = stock.financial_metrics || {};
+                const rm = stock.risk_metrics || {};
+
+                html += `
+                <div class="card mb-4 shadow-sm">
+                    <div class="card-header text-white" style="background: ${headerGradient}">
+                        <h4 class="mb-0">${stock.name} (${stock.symbol}) <span class="badge bg-warning text-dark ms-2">¥${stock.price || 0}</span></h4>
+                    </div>
+                    <div class="card-body p-0">
+
+                        <!-- 财务指标表格 -->
+                        <div class="p-3 border-bottom">
+                            <h5 class="mb-3" style="color: #667eea !important;"><i class="fas fa-chart-line me-2"></i>财务指标</h5>
+                            <div class="table-responsive">
+                                <table class="table table-striped table-hover table-bordered mb-0">
+                                    <thead style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                                        <tr>
+                                            <th>盈利能力</th>
+                                            <th>偿债能力</th>
+                                            <th>估值指标</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">ROE:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${fm.roe || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">ROA:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${fm.roa || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">毛利率:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${fm.gross_margin || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">净利率:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${fm.net_margin || '-'}</strong></div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">资产负债率:</span></div>
+                                                    <div class="col-5"><strong class="${(fm.debt_ratio && parseFloat(fm.debt_ratio) > 70) ? 'text-danger' : 'text-dark'}">${fm.debt_ratio || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">流动比率:</span></div>
+                                                    <div class="col-5"><strong class="${(fm.current_ratio && parseFloat(fm.current_ratio) < 1) ? 'text-danger' : 'text-dark'}">${fm.current_ratio || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">速动比率:</span></div>
+                                                    <div class="col-5"><strong class="${(fm.quick_ratio && parseFloat(fm.quick_ratio) < 1) ? 'text-danger' : 'text-dark'}">${fm.quick_ratio || '-'}</strong></div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">PE:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${stock.pe || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">PB:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${stock.pb || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">市值:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${stock.market_cap || '-'}</strong></div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- 风险指标表格 -->
+                        <div class="p-3 border-bottom" style="background-color: #f8f9fa;">
+                            <h5 class="mb-3" style="color: #667eea !important;"><i class="fas fa-shield-alt me-2"></i>风险指标</h5>
+                            <div class="table-responsive">
+                                <table class="table table-striped table-hover table-bordered mb-0">
+                                    <thead style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                                        <tr>
+                                            <th>波动性风险</th>
+                                            <th>下行风险</th>
+                                            <th>风险调整收益</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">年化波动率:</span></div>
+                                                    <div class="col-5"><strong class="${(rm.volatility && parseFloat(rm.volatility) > 30) ? 'text-danger' : 'text-dark'}">${rm.volatility || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">VaR(95%):</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${rm.var_95 || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">CVaR:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${rm.cvar_95 || '-'}</strong></div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">最大回撤:</span></div>
+                                                    <div class="col-5"><strong class="${(rm.max_drawdown && parseFloat(rm.max_drawdown) < -20) ? 'text-danger' : 'text-dark'}">${rm.max_drawdown || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">下行标准差:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${rm.downside_dev || '-'}</strong></div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">夏普比率:</span></div>
+                                                    <div class="col-5"><strong class="${(rm.sharpe_ratio && parseFloat(rm.sharpe_ratio) < 0.5) ? 'text-warning' : 'text-success'}">${rm.sharpe_ratio || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">Sortino:</span></div>
+                                                    <div class="col-5"><strong class="${(rm.sortino_ratio && parseFloat(rm.sortino_ratio) < 0.5) ? 'text-warning' : 'text-success'}">${rm.sortino_ratio || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">Calmar:</span></div>
+                                                    <div class="col-5"><strong class="${(rm.calmar_ratio && parseFloat(rm.calmar_ratio) < 0.5) ? 'text-warning' : 'text-success'}">${rm.calmar_ratio || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">Treynor:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${rm.treynor_ratio || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">Omega:</span></div>
+                                                    <div class="col-5"><strong class="${(rm.omega_ratio && parseFloat(rm.omega_ratio) < 1) ? 'text-warning' : 'text-success'}">${rm.omega_ratio || '-'}</strong></div>
+                                                </div>
+                                                <div class="row">
+                                                    <div class="col-7"><span class="fw-bold text-dark">Beta:</span></div>
+                                                    <div class="col-5"><strong class="text-dark">${rm.beta || '-'}</strong></div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- M-Score财务操纵检测 -->
+                        <div class="p-3">
+                            <h5 class="mb-3" style="color: #667eea !important;"><i class="fas fa-search me-2"></i>Beneish M-Score 财务操纵检测</h5>
+                            ${getMScoreHtmlFull(rm)}
+                        </div>
+                    </div>
+                </div>
+                `;
+            });
+
+            const contentEl = document.getElementById('analysis-content');
+            const resultsEl = document.getElementById('analysis-results');
+
+            if (contentEl) {
+                // 只有在有 taskId 时才显示导出按钮
+                const exportBar = currentTaskId ? `
+                <div class="d-flex justify-content-end mb-4">
+                    <button class="btn btn-primary" onclick="downloadExport('${currentTaskId}')" style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); border:none;">
+                        <i class="fas fa-download me-2"></i>导出分析报告
+                    </button>
+                </div>` : '';
+                contentEl.innerHTML = exportBar + html;
+            }
+            if (resultsEl) {
+                resultsEl.style.display = 'block';
+            }
+            // 初始化动态插入的 tooltip
+            initDynamicTooltips();
+        }
+
+        // 联合风控结果显示
+        function displayJointRiskResult(resultData) {
+            const data = resultData.data;
+            if (!data || !data.length) return;
+
+            const headerGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+
+            let html = '';
+            data.forEach(stock => {
+                const rm = stock.risk_metrics || {};
+                const jrm = stock.joint_risk_metrics || {};
+
+                const riskScore = parseInt(jrm.combined_risk_score) || 0;
+                const riskLevel = jrm.combined_risk_level || '-';
+                const riskSummary = jrm.combined_risk_summary || '';
+                const riskClass = riskLevel === '低' ? 'alert-success' : riskLevel === '中' ? 'alert-warning' : riskLevel === '高' ? 'alert-danger' : 'alert-danger';
+                const riskIcon = riskLevel === '低' ? 'fa-check-circle' : riskLevel === '中' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle';
+
+                html += `
+                <div class="card mb-4 shadow-sm">
+                    <div class="card-header text-white" style="background: ${headerGradient}">
+                        <h4 class="mb-0"><i class="fas fa-shield-alt me-2"></i>${stock.name} (${stock.symbol}) — 联合风控分析 <span class="badge bg-warning text-dark ms-2">¥${stock.price || 0}</span></h4>
+                    </div>
+                    <div class="card-body p-0">
+
+                        <!-- 综合风险评分 -->
+                        <div class="p-4 border-bottom text-center" style="background:#fafafa;">
+                            <div class="row justify-content-center">
+                                <div class="col-md-3">
+                                    <div class="border rounded p-3 ${riskClass}">
+                                        <h2 class="mb-0"><i class="fas ${riskIcon} me-2"></i>${jrm.combined_risk_score || '-'}</div>
+                                        <div class="mt-2 fw-bold">综合风险等级: <strong>${riskLevel}</strong></div>
+                                    </div>
+                                </div>
+                            </div>
+                            ${riskSummary ? `<div class="mt-3 text-start"><i class="fas fa-info-circle me-2 text-muted"></i>${riskSummary}</div>` : ''}
+                        </div>
+
+                        <!-- 第一行：盈余管理 + 破产预警 -->
+                        <div class="row g-0">
+
+                            <!-- 盈余管理 -->
+                            <div class="col-md-6 border-end">
+                                <div class="p-3">
+                                    <h6 class="mb-3" style="color:#667eea;"><i class="fas fa-chart-line me-2"></i>一、盈余管理量化模型</h6>
+                                    <div class="mb-2">
+                                        <div class="d-flex justify-content-between small"><span class="fw-bold">Jones Model</span><span>${jrm.jones_da || '-'}</span></div>
+                                        <div class="text-muted small">${jrm.jones_interpretation || '-'}</div>
+                                    </div>
+                                    <div class="mb-2">
+                                        <div class="d-flex justify-content-between small"><span class="fw-bold">Dechow-Dichev</span><span>${jrm.dd_aq || '-'}</span></div>
+                                        <div class="text-muted small">${jrm.dd_interpretation || '-'}</div>
+                                    </div>
+                                    <div class="mb-2">
+                                        <div class="d-flex justify-content-between small"><span class="fw-bold">Roychowdhury REM</span><span>${jrm.rem_score || '-'}</span></div>
+                                        <div class="text-muted small">${jrm.rem_interpretation || '-'}</div>
+                                    </div>
+                                    <div class="small text-muted mt-2"><i class="fas fa-lightbulb me-1"></i>Jones侧重重大舞弊，REM侧重真实盈余管理，二者互补</div>
+                                </div>
+                            </div>
+
+                            <!-- 破产预警 -->
+                            <div class="col-md-6">
+                                <div class="p-3">
+                                    <h6 class="mb-3" style="color:#667eea;"><i class="fas fa-exclamation-circle me-2"></i>二、财务困境 / 破产预警</h6>
+                                    <div class="row g-2">
+                                        <div class="col-6">
+                                            <div class="border rounded p-2 text-center">
+                                                <div class="small text-muted">Altman Z-Score</div>
+                                                <div class="fw-bold fs-5">${jrm.altman_z || '-'}</div>
+                                                <div class="small text-muted text-start">${jrm.altman_z_interpretation || '-'}</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="border rounded p-2 text-center">
+                                                <div class="small text-muted">Ohlson O-Score</div>
+                                                <div class="fw-bold fs-5">${jrm.oholson_o || '-'}</div>
+                                                <div class="small text-muted text-start">${jrm.oholson_o_interpretation || '-'}</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="border rounded p-2 text-center">
+                                                <div class="small text-muted">Springate S</div>
+                                                <div class="fw-bold fs-5">${jrm.springate_s || '-'}</div>
+                                                <div class="small text-muted text-start">${jrm.springate_s_interpretation || '-'}</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="border rounded p-2 text-center">
+                                                <div class="small text-muted">Zmijewski X</div>
+                                                <div class="fw-bold fs-5">${jrm.zmijewski_x || '-'}</div>
+                                                <div class="small text-muted text-start">${jrm.zmijewski_x_interpretation || '-'}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 第二行：财报舞弊/造假概率模型 -->
+                        <div class="row g-0 border-top">
+                            <div class="col-12">
+                                <div class="p-3">
+                                    <h6 class="mb-3" style="color:#667eea;"><i class="fas fa-fish me-2"></i>三、财报舞弊 / 造假概率模型</h6>
+                                    <div class="row g-2">
+                                        <div class="col-md-3 col-6">
+                                            <div class="border rounded p-2 text-center h-100">
+                                                <div class="small text-muted">Dechow F-Score</div>
+                                                <div class="fw-bold fs-5" style="color:#667eea;">${jrm.dechow_f || '-'}</div>
+                                                <div class="small text-muted">舞弊概率</div>
+                                                <div class="small text-muted text-start mt-1">${jrm.dechow_f_interpretation || '-'}</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3 col-6">
+                                            <div class="border rounded p-2 text-center h-100">
+                                                <div class="small text-muted">Montier C-Score</div>
+                                                <div class="fw-bold fs-5" style="color:#667eea;">${jrm.montier_c || '-'}</div>
+                                                <div class="small text-muted">6分制</div>
+                                                <div class="small text-muted text-start mt-1">${jrm.montier_c_interpretation || '-'}</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3 col-6">
+                                            <div class="border rounded p-2 text-center h-100">
+                                                <div class="small text-muted">Sloan 应计异象</div>
+                                                <div class="fw-bold fs-5" style="color:#667eea;">${jrm.sloan_accrual || '-'}</div>
+                                                <div class="small text-muted">应计占比</div>
+                                                <div class="small text-muted text-start mt-1">${jrm.sloan_accrual_interpretation || '-'}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 第三行：财务质量筛查 + M-Score -->
+                        <div class="row g-0 border-top">
+                            <!-- 财务质量筛查 -->
+                            <div class="col-md-4 border-end">
+                                <div class="p-3">
+                                    <h6 class="mb-3" style="color:#667eea;"><i class="fas fa-trophy me-2"></i>四、财务质量筛查</h6>
+                                    <div class="d-flex align-items-center justify-content-center mb-2">
+                                        <div class="fs-1 fw-bold" style="color:#667eea;">${jrm.piotroski_f || '-'}</div>
+                                        <div class="ms-3 text-start">
+                                            <div class="fw-bold">Piotroski F-Score</div>
+                                            <div class="small text-muted">满分9分，≥7分优良，≤3分极差</div>
+                                        </div>
+                                    </div>
+                                    <div class="small">${jrm.piotroski_f_interpretation || '-'}</div>
+                                </div>
+                            </div>
+
+                            <!-- M-Score -->
+                            <div class="col-md-8">
+                                <div class="p-3">
+                                    <h6 class="mb-3" style="color:#667eea;"><i class="fas fa-search me-2"></i>五、Beneish M-Score 财务操纵检测</h6>
+                                    ${getMScoreHtml(rm)}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 帮助文档 -->
+                        <div class="p-3 bg-light border-top">
+                            <h6 class="mb-3" style="color:#667eea;"><i class="fas fa-question-circle me-2"></i>模型公式与解读 Q&A</h6>
+                            <div class="accordion" id="modelHelpAccordion">
+                                <div class="accordion-item border-0 bg-transparent">
+                                    <h2 class="accordion-header" id="headingOne">
+                                        <button class="accordion-button collapsed bg-transparent p-1 ps-0" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="false" aria-controls="collapseOne" style="font-size:13px;">
+                                            <i class="fas fa-chevron-right me-2 text-muted" style="font-size:11px;"></i>一、综合得分怎么算的？
+                                        </button>
+                                    </h2>
+                                    <div id="collapseOne" class="accordion-collapse collapse" aria-labelledby="headingOne" data-bs-parent="#modelHelpAccordion">
+                                        <div class="accordion-body py-2 ps-4" style="font-size:12px; color:#6c757d; line-height:1.8;">
+                                            <p class="mb-1"><strong>综合得分 = 0~100分</strong>，由5个维度加权：</p>
+                                            <ul class="mb-2 ps-3">
+                                                <li>① 盈余管理（Jones + REM）：0~20分 | ② 财报舞弊（Dechow + Montier + Sloan + M-Score）：0~25分</li>
+                                                <li>③ 破产预警（Altman Z + Ohlson + Springate + Zmijewski）：0~25分</li>
+                                                <li>④ 应计质量（Dechow-Dichev）：0~15分 | ⑤ Piotroski F-Score：0~15分</li>
+                                            </ul>
+                                            <p class="mb-0"><strong>评级：</strong>&lt;25分低风险 | 25-50中风险 | 50-75高风险 | &gt;75极高风险</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item border-0 bg-transparent">
+                                    <h2 class="accordion-header" id="headingTwo">
+                                        <button class="accordion-button collapsed bg-transparent p-1 ps-0" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo" style="font-size:13px;">
+                                            <i class="fas fa-chevron-right me-2 text-muted" style="font-size:11px;"></i>二、Dechow F-Score 和 M-Score 有什么区别？
+                                        </button>
+                                    </h2>
+                                    <div id="collapseTwo" class="accordion-collapse collapse" aria-labelledby="headingTwo" data-bs-parent="#modelHelpAccordion">
+                                        <div class="accordion-body py-2 ps-4" style="font-size:12px; color:#6c757d; line-height:1.8;">
+                                            <p class="mb-1"><strong>M-Score</strong>：识别会计科目造假（虚增收入/资产），基于应计模型，侧重<strong>历史财务报表数据</strong>。</p>
+                                            <p class="mb-0"><strong>Dechow F-Score</strong>：直接预测企业被监管处罚、重大错报概率，包含11个变量（含软资产、融资租赁等表外负债），覆盖<strong>管理层舞弊动机+手段</strong>，更全面。</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item border-0 bg-transparent">
+                                    <h2 class="accordion-header" id="headingThree">
+                                        <button class="accordion-button collapsed bg-transparent p-1 ps-0" type="button" data-bs-toggle="collapse" data-bs-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree" style="font-size:13px;">
+                                            <i class="fas fa-chevron-right me-2 text-muted" style="font-size:11px;"></i>三、Altman Z 和 Ohlson O 能同时用吗？
+                                        </button>
+                                    </h2>
+                                    <div id="collapseThree" class="accordion-collapse collapse" aria-labelledby="headingThree" data-bs-parent="#modelHelpAccordion">
+                                        <div class="accordion-body py-2 ps-4" style="font-size:12px; color:#6c757d; line-height:1.8;">
+                                            <p class="mb-1"><strong>Altman Z-Score</strong>：专为<strong>上市公司制造业</strong>设计，Z&gt;2.99安全，Z&lt;1.81高风险。</p>
+                                            <p class="mb-1"><strong>Ohlson O-Score</strong>：Logistic回归，<strong>全行业适用</strong>，包含亏损虚拟变量，对民企、科技公司更友好。</p>
+                                            <p class="mb-0"><strong>建议同时用</strong>——两者互补，Z值低+O值高 = 双重验证的高破产风险。</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item border-0 bg-transparent">
+                                    <h2 class="accordion-header" id="headingFour">
+                                        <button class="accordion-button collapsed bg-transparent p-1 ps-0" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFour" aria-expanded="false" aria-controls="collapseFour" style="font-size:13px;">
+                                            <i class="fas fa-chevron-right me-2 text-muted" style="font-size:11px;"></i>四、Sloan 应计异象模型怎么用？
+                                        </button>
+                                    </h2>
+                                    <div id="collapseFour" class="accordion-collapse collapse" aria-labelledby="headingFour" data-bs-parent="#modelHelpAccordion">
+                                        <div class="accordion-body py-2 ps-4" style="font-size:12px; color:#6c757d; line-height:1.8;">
+                                            <p class="mb-1">公式：<strong>应计 = |净利润 - 经营现金流| / 总资产</strong></p>
+                                            <p class="mb-1"><strong>逻辑：</strong>应计占利润比值越高，说明利润中"纸面部分"越大，现金流支撑越少。</p>
+                                            <p class="mb-0"><strong>判断：</strong>应计 &lt;5%优秀，5-10%一般，&gt;10%异常高风险；重点看"净利润虚高"情形（NI大但CFO小）。</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item border-0 bg-transparent">
+                                    <h2 class="accordion-header" id="headingFive">
+                                        <button class="accordion-button collapsed bg-transparent p-1 ps-0" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFive" aria-expanded="false" aria-controls="collapseFive" style="font-size:13px;">
+                                            <i class="fas fa-chevron-right me-2 text-muted" style="font-size:11px;"></i>五、Beneish 5变量和原版M-Score差在哪？
+                                        </button>
+                                    </h2>
+                                    <div id="collapseFive" class="accordion-collapse collapse" aria-labelledby="headingFive" data-bs-parent="#modelHelpAccordion">
+                                        <div class="accordion-body py-2 ps-4" style="font-size:12px; color:#6c757d; line-height:1.8;">
+                                            <p class="mb-1"><strong>原版M-Score</strong>：8个变量（DSRI/GMI/AQI/SGI/DEPI/SGAI/LVGI/TATA），数据门槛高，需要多期完整报表。</p>
+                                            <p class="mb-0"><strong>5变量精简版</strong>：保留核心信号（应收/毛利/资产质量/销售增长/应计），阈值调整为<strong>-2.76</strong>，适合<strong>中小公司、非标重整主体</strong>。</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+            });
+
+            const contentEl = document.getElementById('analysis-content');
+            const resultsEl = document.getElementById('analysis-results');
+            if (contentEl) {
+                contentEl.innerHTML = html;
+            }
+            if (resultsEl) {
+                resultsEl.style.display = 'block';
+            }
+            initDynamicTooltips();
+        }
+
+        // 下载导出文件
+        function downloadExport(taskId) {
+            const btn = event.target.closest('button');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>生成中...';
+            btn.disabled = true;
+
+            fetch(`/api/v1/export/${taskId}`)
+                .then(response => {
+                    if (!response.ok) throw new Error('导出失败');
+                    const contentType = response.headers.get('Content-Type') || '';
+                    let ext = 'html';
+                    if (contentType.includes('pdf')) ext = 'pdf';
+                    else if (contentType.includes('json')) ext = 'json';
+                    else if (contentType.includes('csv')) ext = 'csv';
+                    else if (contentType.includes('excel') || contentType.includes('spreadsheet')) ext = 'xlsx';
+                    const timestamp = new Date().toISOString().slice(0, 10);
+                    const filename = `astock_report_${timestamp}.${ext}`;
+                    return response.blob().then(blob => ({ blob, filename }));
+                })
+                .then(({ blob, filename }) => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showSuccessMessage(`已导出: ${filename}`);
+                })
+                .catch(err => {
+                    showErrorMessage('导出失败: ' + err.message);
+                })
+                .finally(() => {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                });
+        }
+
+        // M-Score 显示HTML（简化版）
+        // 简化版M-Score（联合风控用）
+        function getMScoreHtml(rm) {
+            const mScore = parseFloat(rm.m_score) || 0;
+            let statusClass = 'alert-danger';
+            if (mScore < -1.78) {
+                statusClass = 'alert-success';
+            } else if (mScore < -1.21) {
+                statusClass = 'alert-warning';
+            }
+
+            return `
+            <div class="alert ${statusClass} mb-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>M-Score 综合得分:</strong>
+                        <span class="fs-5 ms-2">${rm.m_score || '-'}</span>
+                    </div>
+                    <span class="badge bg-dark">${rm.m_score_interpretation || '-'}</span>
+                </div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap small">
+                <span class="text-success"><i class="fas fa-check-circle me-1"></i>M-Score &lt; -1.78 正常</span>
+                <span class="text-warning"><i class="fas fa-exclamation-circle me-1"></i>-1.78 ~ -1.21 灰色</span>
+                <span class="text-danger"><i class="fas fa-times-circle me-1"></i>M-Score &gt; -1.21 操纵嫌疑</span>
+            </div>
+            `;
+        }
+
+        // 完整版M-Score（综合分析用，含8分项指标表格）
+        function getMScoreHtmlFull(rm) {
+            const mScore = parseFloat(rm.m_score) || 0;
+            let statusClass = 'alert-danger';
+            if (mScore < -1.78) {
+                statusClass = 'alert-success';
+            } else if (mScore < -1.21) {
+                statusClass = 'alert-warning';
+            }
+
+            return `
+            <div class="alert ${statusClass} mb-3">
+                <h4 class="alert-heading mb-1">M-Score 综合得分: <strong>${rm.m_score || '-'}</strong></h4>
+                <p class="mb-0">结论: <strong>${rm.m_score_interpretation || ''}</strong></p>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-sm table-hover table-bordered">
+                    <thead style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                        <tr>
+                            <th>指标</th>
+                            <th>数值</th>
+                            <th>含义</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong class="text-dark">DSRI</strong><br><small class="text-muted">(应收账款天数指数)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.dsri || '-'}</strong></td>
+                            <td><small>DSRI &gt; 1.5 表明应收账款增速显著快于收入增速，可能存在虚构销售</small></td>
+                        </tr>
+                        <tr>
+                            <td><strong class="text-dark">GMI</strong><br><small class="text-muted">(毛利率指数)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.gmi || '-'}</strong></td>
+                            <td><small>GMI &gt; 1.2 表明毛利率下降，盈利能力恶化</small></td>
+                        </tr>
+                        <tr>
+                            <td><strong class="text-dark">AQI</strong><br><small class="text-muted">(资产质量指数)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.aq_i || '-'}</strong></td>
+                            <td><small>AQI &gt; 1.1 表明非流动资产占比上升，资产质量下降</small></td>
+                        </tr>
+                        <tr>
+                            <td><strong class="text-dark">TATA</strong><br><small class="text-muted">(总应计项目比率)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.tata || '-'}</strong></td>
+                            <td><small>TATA &gt; 0.1（净利润中超过10%没有现金支撑），应计利润 = 净利润中还没有变成现金的部分</small></td>
+                        </tr>
+                        <tr>
+                            <td><strong class="text-dark">SGI</strong><br><small class="text-muted">(销售增长指数)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.sgi || '-'}</strong></td>
+                            <td><small>SGI &gt; 1 表明销售增长快，当SGI与DSRI同时偏高时，可能涉及财务操纵</small></td>
+                        </tr>
+                        <tr>
+                            <td><strong class="text-dark">LVGI</strong><br><small class="text-muted">(杠杆指数)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.lvgi || '-'}</strong></td>
+                            <td><small>LVGI &gt; 1.5 表明负债率边际变化，杠杆上升</small></td>
+                        </tr>
+                        <tr>
+                            <td><strong class="text-dark">DEPI</strong><br><small class="text-muted">(折旧指数)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.depi || '-'}</strong></td>
+                            <td><small>DEPI &lt; 0.8 表明折旧率下降，可能虚增资产</small></td>
+                        </tr>
+                        <tr>
+                            <td><strong class="text-dark">SGAI</strong><br><small class="text-muted">(销售管理费用指数)</small></td>
+                            <td class="text-center"><strong class="text-dark">${rm.sgai || '-'}</strong></td>
+                            <td><small>SGAI异常低+AQI异常高=联合预警（费用资本化嫌疑）</small></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-3 p-3 bg-light border rounded">
+                <h6 class="d-flex align-items-center gap-2 mb-2">
+                    <i class="fas fa-info-circle me-2"></i>判断标准
+                    <span class="position-relative" style="cursor:pointer;">
+                        <i class="fas fa-question-circle text-muted" style="font-size:14px;"
+                           data-bs-toggle="tooltip" data-bs-placement="top" title=""
+                           id="mscore-tip"
+                           data-bs-original-title="⚠️ 注意事项：该模型基于美股数据训练，A股判定标准可能过严，false positive 率较高，请结合实际业务情况综合判断，切勿仅凭此指标下结论。"></i>
+                    </span>
+                </h6>
+                <div class="d-flex gap-3 small">
+                    <span class="text-success"><i class="fas fa-check-circle me-1"></i>M-Score &lt; -1.78 财务正常</span>
+                    <span class="text-warning"><i class="fas fa-exclamation-circle me-1"></i>-1.78 ~ -1.21 灰色地带</span>
+                    <span class="text-danger"><i class="fas fa-times-circle me-1"></i>M-Score &gt; -1.21 操纵嫌疑</span>
+                </div>
+                <small class="text-muted mt-2 d-block">M-Score = -4.840 + 0.920×DSRI + 0.528×GMI + 0.404×AQI + 0.892×SGI + 0.115×DEPI - 0.172×SGAI - 0.327×LVGI + 4.697×TATA</small>
+            </div>
+            `;
+        }
+
+        // 初始化动态插入的 Bootstrap tooltips
+        function initDynamicTooltips() {
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.forEach(function (tooltipTriggerEl) {
+                // 避免重复初始化
+                if (!tooltipTriggerEl._tooltip) {
+                    tooltipTriggerEl._tooltip = new bootstrap.Tooltip(tooltipTriggerEl);
+                }
+            });
+        }
+
+        // 心跳检测
+        setInterval(() => {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'ping'
+                }));
+            }
+        }, 30000);
+    </script>
+</body>
+</html>

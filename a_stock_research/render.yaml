@@ -1,0 +1,17 @@
+# Render Blueprint - A股智能体分析系统
+# 部署命令: render bluepring up
+
+services:
+  - type: web
+    name: astock-analysis
+    runtime: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: MINIMAX_API_KEY
+        sync: false
+      - key: CAIHUI_MCP_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.10"
