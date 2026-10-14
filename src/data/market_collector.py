@@ -86,6 +86,50 @@ def _parse_tencent_response(text: str, code: str) -> Optional[Dict]:
         return None
 
 
+def fetch_major_indices_history(code: str, start_date: str) -> Dict[str, List[float]]:
+    """
+    获取主要指数历史K线（OHLC），通过新浪接口
+    code: 'sh000001' 等
+    start_date: 'YYYY-MM-DD'
+    返回: {date: [open, close, high, low, volume]}
+    """
+    try:
+        # 新浪指数代码：上交所加 sh，深交所加 sz
+        symbol = 'sh' + code[2:] if code.startswith('sh') else 'sz' + code[2:]
+        url = (
+            f'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/'
+            f'CN_MarketData.getKLineData?symbol={symbol}&scale=240&ma=no&datalen=180'
+        )
+        session = requests.Session()
+        r = session.get(url, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://finance.sina.com.cn'
+        }, timeout=10)
+        r.encoding = 'utf-8'
+        data = r.json()
+        if not isinstance(data, list):
+            return {}
+        result = {}
+        for row in data:
+            d = row.get('day', '')
+            try:
+                o = float(row.get('open', 0))
+                c = float(row.get('close', 0))
+                h = float(row.get('high', 0))
+                l = float(row.get('low', 0))
+                v = float(row.get('volume', 0))
+                result[d] = [o, c, h, l, v]
+            except Exception:
+                continue
+        # 过滤掉早于 start_date 的数据
+        if start_date:
+            result = {d: v for d, v in result.items() if d >= start_date}
+        return result
+    except Exception as e:
+        logger.debug(f"指数历史获取失败 {code}: {e}")
+        return {}
+
+
 def fetch_major_indices() -> List[Dict]:
     """
     获取主要市场指数行情
@@ -604,3 +648,207 @@ def fetch_sector_flow_data() -> List[Dict]:
     # 所有API都失败，返回演示数据
     logger.debug("所有API失败，使用演示数据")
     return _demo_data()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 全市场成交额集中度指标（Top5% 成交额占比）
+# 指标：每天成交额前5%的股票 / 全市场总成交额 × 100%
+# ─────────────────────────────────────────────────────────────────────────────
+
+import pandas as pd
+from datetime import datetime, timedelta
+import time as _time
+
+_concentration_cache: Dict[str, float] = {}
+_concentration_history: List[Dict] = []
+
+
+def fetch_top5_concentration() -> Dict:
+    """
+    获取当日全市场成交额集中度（前5%个股成交额占比）
+    返回: {'date': str, 'concentration': float, 'total_stocks': int,
+           'top5_stocks': int, 'top5_amount': float, 'total_amount': float}
+    """
+    import os
+    os.environ['NO_PROXY'] = '*'
+
+    # ── 方案1：东财全市场实时行情（成交额字段：f6）───────────
+    def _try_eastmoney_spot():
+        session = requests.Session()
+        session.trust_env = False
+        headers = {
+            'Referer': 'https://data.eastmoney.com/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        # 沪深北三市全市场，f6=成交额（元）
+        url = (
+            'https://push2.eastmoney.com/api/qt/clist/get?'
+            'pn=1&pz=5000&po=1&np=1&fltt=2&invt=2&fid=f6&'
+            'fs=m:0+t:6,m:0+t:13,m:1+t:2,m:1+t:23&'
+            'fields=f12,f14,f6,f8,f3'
+        )
+        r = session.get(url, headers=headers, timeout=15)
+        r.encoding = 'utf-8'
+        data = r.json()
+        stocks = data.get('data', {}).get('diff', [])
+        if not stocks:
+            return None
+
+        total_amount = 0.0
+        valid = []
+        for s in stocks:
+            try:
+                amt = float(s.get('f6', 0) or 0)
+                if amt <= 0:
+                    continue
+                valid.append({'code': str(s.get('f12', '')), 'name': str(s.get('f14', '')), 'amount': amt})
+                total_amount += amt
+            except Exception:
+                continue
+
+        if not valid or total_amount <= 0:
+            return None
+
+        # 按成交额降序，取前5%
+        valid.sort(key=lambda x: x['amount'], reverse=True)
+        n_top = max(1, int(len(valid) * 0.05))
+        top5_amount = sum(x['amount'] for x in valid[:n_top])
+        concentration = (top5_amount / total_amount) * 100
+
+        return {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'concentration': concentration,
+            'total_stocks': len(valid),
+            'top5_stocks': n_top,
+            'top5_amount': top5_amount / 1e8,   # 转为亿元
+            'total_amount': total_amount / 1e8,  # 转为亿元
+        }
+
+    # ── 方案2：akshare全市场股票列表+新浪批量实时行情─────────
+    def _try_akshare_sina():
+        try:
+            import akshare as ak
+            stock_list = ak.stock_info_a_code_name()
+            codes_raw = stock_list['code'].tolist()
+        except Exception:
+            return None
+
+        # akshare返回纯数字代码，补上前缀：沪市600/601/603/605/688开头 → sh，深市000/001/002/003/300开头 → sz
+        codes = []
+        for c in codes_raw:
+            c = str(c).zfill(6)
+            if c.startswith(('600', '601', '603', '605', '688')):
+                codes.append('sh' + c)
+            elif c.startswith(('000', '001', '002', '003', '300')):
+                codes.append('sz' + c)
+
+        if not codes:
+            return None
+
+        session = requests.Session()
+        headers = {'Referer': 'https://finance.sina.com.cn', 'User-Agent': 'Mozilla/5.0'}
+        total_amount = 0.0
+        valid = []
+
+        # 新浪每批50个code（留余量），全量获取不设上限
+        batch_size = 50
+        for i in range(0, len(codes), batch_size):
+            batch = codes[i:i+batch_size]
+            codes_param = ','.join(batch)
+            url = f'https://hq.sinajs.cn/list={codes_param}'
+            try:
+                r = session.get(url, headers=headers, timeout=20)
+                r.encoding = 'gbk'
+                for line in r.text.strip().split('\n'):
+                    if '="";' in line or '=""' in line.split('=')[-1]:
+                        continue
+                    parts = line.split('"')
+                    if len(parts) < 2:
+                        continue
+                    fields = parts[1].split(',')
+                    if len(fields) < 10:
+                        continue
+                    try:
+                        # 新浪字段：8=成交额（元）
+                        code_raw = line.split('var hq_str_')[1].split('=')[0].strip()
+                        amount = float(fields[8]) if fields[8] else 0.0
+                        if amount > 0:
+                            valid.append({'code': code_raw, 'amount': amount})
+                            total_amount += amount
+                    except Exception:
+                        continue
+            except Exception as ex:
+                logger.debug(f"Sina batch {i//batch_size} failed: {ex}")
+                continue
+            _time.sleep(0.08)  # 加快批量请求
+
+        if not valid or total_amount <= 0:
+            return None
+
+        valid.sort(key=lambda x: x['amount'], reverse=True)
+        n_top = max(1, int(len(valid) * 0.05))
+        top5_amount = sum(x['amount'] for x in valid[:n_top])
+        concentration = (top5_amount / total_amount) * 100
+
+        return {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'concentration': concentration,
+            'total_stocks': len(valid),
+            'top5_stocks': n_top,
+            'top5_amount': top5_amount / 1e8,   # 元→亿元
+            'total_amount': total_amount / 1e8,  # 元→亿元
+        }
+
+    # 按优先级尝试（本地网络阻断东财，只保留sina备用方案）
+    for src_name, src_fn in [
+        ('akshare_sina', _try_akshare_sina),
+    ]:
+        try:
+            result = src_fn()
+            if result and result.get('concentration', 0) > 0:
+                logger.debug(f"Top5%集中度获取成功: {src_name} → {result['concentration']:.2f}%")
+                return result
+        except Exception as e:
+            logger.debug(f"Top5%集中度{src_name}失败: {e}")
+
+    return None
+
+
+def get_concentration_history(n_days: int = 90) -> List[Dict]:
+    """
+    返回近N个交易日的集中度历史数据（本地缓存估算，若需真实历史需接入K线数据库）
+    若缓存不足n_days，返回已有数据
+    """
+    if not _concentration_history:
+        # 初始化一个演示历史（用于展示趋势形态）
+        import random
+        random.seed(42)
+        base = 38.0
+        history = []
+        today = datetime.now()
+        for i in range(n_days):
+            d = today - timedelta(days=i)
+            date_str = d.strftime('%Y-%m-%d')
+            # 加入一些波动，模拟真实市场节奏
+            noise = random.uniform(-3, 3)
+            trend = -0.05 * i  # 长期轻微下降趋势
+            val = base + noise + trend
+            val = max(25.0, min(55.0, val))
+            history.append({'date': date_str, 'concentration': round(val, 2)})
+        return list(reversed(history))
+
+    return _concentration_history[-n_days:]
+
+
+def update_concentration_cache():
+    """每日更新一次集中度数据到内存缓存，供UI展示"""
+    global _concentration_cache, _concentration_history
+    today = datetime.now().strftime('%Y-%m-%d')
+    result = fetch_top5_concentration()
+    if result:
+        _concentration_cache['latest'] = result
+        _concentration_history.append(result)
+        if len(_concentration_history) > 365:
+            _concentration_history = _concentration_history[-365:]
+        return result
+    return None
