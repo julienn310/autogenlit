@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Logs
+*.log
+
+# Local config / secrets
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific - use specific paths to avoid matching src/data or src/cache
+/.data/
+/.cache/
+*.tmp
+
+# SQLite databases (shared cache)
+*.db
+*.db-wal
+*.db-shm
+
+# Streamlit secrets (API keys)
+.streamlit/secrets.toml
+.streamlit
