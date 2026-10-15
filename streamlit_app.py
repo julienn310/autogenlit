@@ -1,6 +1,7 @@
 """
 A股智能体分析系统 - Streamlit 版本
 完整迁移自 web/index.html，保留所有指标
+streamlit run streamlit_app.py --server.port 8502
 """
 
 import streamlit as st
@@ -30,6 +31,23 @@ from src.optimization.portfolio_optimizer import PortfolioOptimizer
 from src.agents.pdf_risk_agent import PDFRiskAgent
 from src.agents.announcement_agent import AnnouncementAgent
 from src.cache.shared_cache_stats import get_shared_cache_stats
+from src.data.finchina_collector import (
+    fetch_capital_flow,
+    fetch_margin_trading,
+    fetch_block_trades,
+    fetch_shareholders_trading,
+    fetch_executive_trading,
+    fetch_repurchase,
+    fetch_company_suppliers,
+    fetch_company_customers,
+    fetch_company_tendering,
+    fetch_company_bidding,
+    fetch_company_investment_projects,
+    fetch_company_pe_vc,
+    fetch_company_guarantee_events,
+    fetch_company_equity_pledge,
+    fetch_company_receivable_financing,
+)
 
 # 页面配置
 st.set_page_config(
@@ -39,85 +57,85 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 自定义样式
+# 自定义样式（极简灰度配色 + 半透明强调色）
 st.markdown("""
 <style>
     .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 25px;
-        border-radius: 12px;
-        color: white;
+        background: #4a5d6e;
+        padding: 18px 25px;
+        border-radius: 8px;
+        color: #f5f5f5;
         text-align: center;
-        margin-bottom: 25px;
+        margin-bottom: 18px;
     }
-    .stApp { background-color: #f8f9fa; }
+    .stApp { background-color: #f4f5f6; }
     .result-card {
         background: white;
-        border-radius: 12px;
-        padding: 20px;
-        margin: 15px 0;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-        border-left: 4px solid #667eea;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 10px 0;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        border-left: 3px solid #7d8b9c;
     }
     .section-title {
-        font-size: 1.2rem;
+        font-size: 0.98rem;
         font-weight: 600;
-        color: #1a1a2e;
-        margin: 20px 0 12px 0;
-        padding-bottom: 8px;
-        border-bottom: 2px solid #667eea;
+        color: #4a5d6e;
+        margin: 16px 0 8px 0;
+        padding-bottom: 5px;
+        border-bottom: 1px solid #d8dde2;
     }
     .subsection-title {
-        font-size: 1rem;
+        font-size: 0.92rem;
         font-weight: 600;
-        color: #0f3460;
-        margin: 15px 0 10px 0;
+        color: #5a6b7a;
+        margin: 10px 0 6px 0;
     }
     .metric-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
-        gap: 15px;
-        margin: 12px 0;
+        gap: 10px;
+        margin: 8px 0;
     }
     .metric-item {
-        background: #f8f9fa;
-        padding: 12px 15px;
-        border-radius: 8px;
+        background: #f7f8fa;
+        padding: 9px 12px;
+        border-radius: 6px;
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
-    .metric-item .label { font-size: 0.85rem; color: #6c757d; }
-    .metric-item .value { font-size: 1rem; font-weight: 600; color: #0f3460; }
+    .metric-item .label { font-size: 0.8rem; color: #9099a3; }
+    .metric-item .value { font-size: 0.92rem; font-weight: 600; color: #4a5d6e; }
     .analysis-text {
-        background: #f8f9fa;
-        padding: 18px;
-        border-radius: 8px;
-        line-height: 1.9;
-        margin: 12px 0;
+        background: #f7f8fa;
+        padding: 14px;
+        border-radius: 6px;
+        line-height: 1.7;
+        margin: 8px 0;
     }
     .advice-box {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 20px;
-        border-radius: 10px;
-        margin: 15px 0;
+        background: #4a5d6e;
+        color: #f5f5f5;
+        padding: 16px;
+        border-radius: 8px;
+        margin: 10px 0;
     }
     .weight-row {
         display: flex;
         align-items: center;
-        gap: 15px;
-        margin: 10px 0;
+        gap: 10px;
+        margin: 6px 0;
     }
-    .weight-label { min-width: 180px; font-weight: 500; }
-    .weight-bar-container { flex: 1; background: #e9ecef; border-radius: 5px; height: 25px; overflow: hidden; }
-    .weight-bar-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; color: white; font-weight: 500; font-size: 0.85rem; }
-    .weight-value { min-width: 70px; text-align: right; font-weight: 600; color: #0f3460; }
-    .risk-high { border-left: 4px solid #dc3545; background: #fff5f5; padding: 15px; border-radius: 8px; margin: 10px 0; }
-    .risk-medium { border-left: 4px solid #ffc107; background: #fffbf0; padding: 15px; border-radius: 8px; margin: 10px 0; }
-    .risk-low { border-left: 4px solid #28a745; background: #f0fff0; padding: 15px; border-radius: 8px; margin: 10px 0; }
-    .interpretation { font-size: 0.9rem; color: #6c757d; margin-top: 8px; font-style: italic; }
-    div[data-testid="stHorizontalBlock"] > div:first-child .stMetric { background: white; border-radius: 10px; padding: 15px; }
+    .weight-label { min-width: 150px; font-weight: 500; color: #5a6b7a; }
+    .weight-bar-container { flex: 1; background: #e8ebee; border-radius: 4px; height: 20px; overflow: hidden; }
+    .weight-bar-fill { height: 100%; background: #6a7a8a; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; color: white; font-weight: 500; font-size: 0.8rem; }
+    .weight-value { min-width: 60px; text-align: right; font-weight: 600; color: #4a5d6e; }
+    .risk-high { border-left: 3px solid #b89090; background: #f8f4f4; padding: 10px; border-radius: 6px; margin: 6px 0; }
+    .risk-medium { border-left: 3px solid #c0a878; background: #f9f6f0; padding: 10px; border-radius: 6px; margin: 6px 0; }
+    .risk-low { border-left: 3px solid #90b09a; background: #f4f7f5; padding: 10px; border-radius: 6px; margin: 6px 0; }
+    .interpretation { font-size: 0.85rem; color: #9099a3; margin-top: 5px; font-style: italic; }
+    div[data-testid="stHorizontalBlock"] > div:first-child .stMetric { background: white; border-radius: 6px; padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -562,6 +580,40 @@ def display_stock_ranking():
     else:
         st.info("暂无热度数据")
 
+
+# ---------------------------------------------------------------------------
+# 模块顶层缓存函数 — 必须在 page block 之外定义,否则 @st.cache_data 行为不可靠
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_company_rel(company: str, lim: int, kind: str):
+    """8 类企业关系查询的统一缓存加载器。
+    定义在模块顶层,确保 streamlit cache_data 的源码 hash 永远稳定。"""
+    if kind == "supplier":  return fetch_company_suppliers(company, lim)
+    if kind == "customer":  return fetch_company_customers(company, lim)
+    if kind == "tender":    return fetch_company_tendering(company, lim)
+    if kind == "bid":       return fetch_company_bidding(company, lim)
+    if kind == "invest":    return fetch_company_investment_projects(company, lim)
+    if kind == "pevc":      return fetch_company_pe_vc(company, lim)
+    if kind == "guar":      return fetch_company_guarantee_events(company, lim)
+    if kind == "pledge":    return fetch_company_equity_pledge(company, lim)
+    raise ValueError(kind)
+
+
+def _load_company_rel_with_retry(company: str, lim: int, kind: str, retries: int = 2):
+    """带超时 + 重试的加载包装(单次失败不影响其他类)。"""
+    import time as _time
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            return _load_company_rel(company, lim, kind)
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                _time.sleep(0.5 * (attempt + 1))  # 0.5s, 1s
+    raise last_err
+
+
 # 主应用
 def main():
     with st.sidebar:
@@ -570,7 +622,7 @@ def main():
         st.success("API Key 已配置")
         st.divider()
         page = st.radio("导航", [
-            "仪表板", "财务分析", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
+            "仪表板", "资金流向", "财务分析", "个股交易数据", "企业关系查询", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
         ], index=0)
         st.divider()
         st.caption("系统状态: 正常运行")
@@ -579,119 +631,269 @@ def main():
     if page == "仪表板":
         # ── 紧凑标题行 ──
         st.markdown("""
-        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
-            <h2 style="margin:0;">📈 A股智能体分析系统</h2>
-            <p style="margin:5px 0 0 0;opacity:0.85;">基于 AutoGen 多智能体协作的金融分析平台</p>
+        <div class="main-header" style="padding:18px 26px;margin-bottom:12px;">
+            <h2 style="margin:0;">A股智能体分析系统</h2>
+            <p style="margin:6px 0 0 0;opacity:0.85;">二级市场深度交易数据 · 企业关系网络 · AutoGen 多智能体协作</p>
         </div>
         """, unsafe_allow_html=True)
 
         col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric("支持股票", "5000+", "实时数据")
-        with col2: st.metric("分析维度", "20+", "财务/风险/市场")
-        with col3: st.metric("智能体数量", "4", "协作分析")
-        with col4: st.metric("PDF分析", "支持", "年报风险识别")
+        with col1: st.metric("覆盖股票", "5000+", "实时行情")
+        with col2: st.metric("数据源", "3 路", "新浪 / 腾讯 / 财汇")
+        with col3: st.metric("分析维度", "30+", "资金/关系/财务/风险")
+        with col4: st.metric("智能体", "4 个", "AutoGen 协作")
 
-        # ========== ETF 基金流向监控 ==========
-        st.markdown('<div class="section-title">💰 ETF基金资金流向监控</div>', unsafe_allow_html=True)
+        # ── 特色功能区(2 行 chip,8 个) ──
+        st.markdown("""
+        <div style="background:#f5f7fa;border:1px solid #e3e6ea;border-radius:8px;
+                    padding:12px 16px;margin:6px 0 14px 0;line-height:1.9;">
+            <div style="font-size:0.78rem;color:#666;letter-spacing:0.5px;margin-bottom:4px;">▍ 核心特色</div>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                <b style="color:#0d3b66;">二级市场深度数据</b> · 主力/特大/大/中/小单资金流向
+            </span>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                融资融券 · 大宗交易 · 股东/高管增减持 · 股票回购
+            </span>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                <b style="color:#2e7d32;">企业关系网络</b> · 供/需 · 招投标 · 投资 · 担保 · 出质
+            </span>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                一键生成 <b>关系网络图</b>(主公司 + N 家关联方)
+            </span>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                <b style="color:#6a4a8a;">AutoGen 多智能体</b> 协作完成投研报告
+            </span>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                <b>PDF 年报</b> 风险识别 · 自动提取关键事项
+            </span>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                实时公告解读 · 风险/资金/情绪三维度扫描
+            </span>
+            <span style="display:inline-block;background:#fff;border:1px solid #d8dde3;border-radius:14px;
+                         padding:3px 11px;margin:2px 4px 2px 0;font-size:0.82rem;color:#2c3e50;">
+                资金/财务/公告 三大数据源打通 · <b>缓存 60 分钟</b>
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
 
-        with st.spinner("📊 正在加载ETF数据..."):
+        # ========== 市场成交额集中度（Top5% 警示）============
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _load_concentration():
+            from src.data.market_collector import fetch_top5_concentration, get_concentration_history
+            today = fetch_top5_concentration()
+            history = get_concentration_history(120)
+            return today, history
+
+        with st.spinner("加载市场结构指标（首次需约50秒）..."):
             try:
-                from src.data.market_collector import fetch_etf_data, fetch_etf_monthly_flows
-                etf_list = fetch_etf_data()
-                flows_data = fetch_etf_monthly_flows()
+                conc_today, conc_history = _load_concentration()
             except Exception:
-                etf_list = []
-                flows_data = {}
+                conc_today, conc_history = None, []
 
-        import plotly.graph_objects as go
+        # 若当日数据获取失败（API不可用），用历史模拟数据补充
+        if not conc_today and conc_history:
+            conc_today = conc_history[-1]
 
-        # 收集近12个月月份
-        all_months = sorted(set(
-            m for months in flows_data.values() for m in months
-        ), reverse=True)
-        recent_months = all_months[:12]
+        def _render_conc_banner(conc_val):
+            """根据集中度数值返回不同颜色风格的HTML banner"""
+            if conc_val >= 48:
+                color = '#d03b3b'
+                label = '极度泡沫化'
+                bg = '#fff5f5'
+                border = '#d03b3b'
+            elif conc_val >= 45:
+                color = '#ec835a'
+                label = '高热区'
+                bg = '#fff8f5'
+                border = '#ec835a'
+            elif conc_val >= 38:
+                color = '#2a78d6'
+                label = '正常区间'
+                bg = '#f0f5ff'
+                border = '#2a78d6'
+            else:
+                color = '#0ca30c'
+                label = '分散偏低'
+                bg = '#f0fff0'
+                border = '#0ca30c'
+            return color, label, bg, border
 
-        if etf_list:
-            # 每行3张卡片，外层不嵌套 st.columns()
-            rows = []
-            for i in range(0, len(etf_list), 3):
-                rows.append(etf_list[i:i+3])
+        if conc_today:
+            c = conc_today
+            val = c['concentration']
+            color, label, bg, border = _render_conc_banner(val)
 
-            for row_etfs in rows:
-                cols = st.columns(3)
-                for ci, row_etf in enumerate(row_etfs):
-                    with cols[ci]:
-                        code = row_etf['code']
-                        name = row_etf['name']
-                        price = row_etf['price']
-                        pct = row_etf['change_pct']
-                        sign = '+' if pct >= 0 else ''
-                        pct_color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
-                        market_cap = row_etf.get('market_cap_yi', 0) or 0
-                        iopv = row_etf.get('iopv', 0) or 0
+            # 详细信息（仅当日真实数据有，演示历史数据没有）
+            has_detail = all(k in c for k in ('total_stocks', 'top5_stocks', 'top5_amount', 'total_amount'))
+            detail_html = (
+                f"当日全市场 {c['total_stocks']} 只股票中，前 {c['top5_stocks']} 只（Top 5%）"
+                f"贡献成交额 <strong>{c['top5_amount']:.0f}亿</strong> / 总成交额 <strong>{c['total_amount']:.0f}亿</strong>"
+                if has_detail else
+                f"<strong>演示数据</strong> — 云端部署后显示真实全市场统计"
+            )
 
-                        # ── 卡片HTML（头部+图表+stat tile） ──
-                        monthly = flows_data.get(code, {})
-                        months_labels = [f"{m[:4]}年{m[5:]}月" for m in recent_months]
-                        values = [monthly.get(m, 0) for m in recent_months]
-                        bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
-                        max_abs = max(abs(v) for v in values) if values else 1
-
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(
-                            x=months_labels,
-                            y=values,
-                            marker_color=bar_colors,
-                            text=[f"{v:+.0f}" if abs(v) >= 10 else f"{v:+.1f}" for v in values],
-                            textposition='outside',
-                            textfont_size=8,
-                            hovertemplate="%{x}<br>净流入: %{y:+.1f}亿<extra></extra>",
-                        ))
-                        fig.update_layout(
-                            height=155,
-                            margin=dict(l=4, r=4, t=4, b=4),
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            font=dict(size=9),
-                            showlegend=False,
-                            xaxis=dict(tickangle=-30, showgrid=False, zeroline=False, tickfont=dict(size=8)),
-                            yaxis=dict(
-                                title=None, showgrid=True, gridcolor='#f0f0f0',
-                                zeroline=True, zerolinecolor='#ccc',
-                                range=[-max_abs * 1.3, max_abs * 1.3],
-                                tickfont=dict(size=7),
-                            ),
-                        )
-
-                        iopv_str = f"{iopv:.3f}" if iopv else "—"
-
-                        # 用HTML卡片包裹：头部 + Plotly图 + 两个stat tile
-                        card_html = f"""
-                        <div style="background:white;border-radius:10px;padding:12px 12px 8px;margin:4px 0;box-shadow:0 1px 6px rgba(0,0,0,0.08);border-top:3px solid {pct_color};">
-                            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
-                                <div>
-                                    <div style="font-weight:700;font-size:0.88rem;color:#1a1a2e;">{name}</div>
-                                    <div style="font-size:1.4rem;font-weight:700;color:#1a1a2e;line-height:1.1;">{price:.3f}</div>
-                                </div>
-                                <div style="text-align:right;">
-                                    <div style="font-size:1rem;font-weight:700;color:{pct_color};">{sign}{pct:.2f}%</div>
-                                    <div style="font-size:0.68rem;color:#888;">{'资金流入' if pct >= 0 else '资金流出'}</div>
-                                </div>
-                            </div>
-                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;">
-                                <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
-                                    <div style="font-size:0.68rem;color:#888;">总市值</div>
-                                    <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{market_cap:.0f}亿</div>
-                                </div>
-                                <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;">
-                                    <div style="font-size:0.68rem;color:#888;">ETF净值(IOPV)</div>
-                                    <div style="font-size:0.88rem;font-weight:600;color:#1a1a2e;">{iopv_str}</div>
-                                </div>
-                            </div>
+            st.markdown(f"""
+            <div style="background:{bg};border-left:5px solid {border};border-radius:10px;
+                        padding:16px 20px;margin:10px 0 14px 0;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                    <div>
+                        <div style="font-size:0.8rem;color:#888;margin-bottom:4px;">
+                            全市场成交额集中度指标 · Top 5% 个股成交额占比
                         </div>
-                        """
-                        st.markdown(card_html, unsafe_allow_html=True)
-                        st.plotly_chart(fig, use_container_width=True)
+                        <div style="display:flex;align-items:baseline;gap:10px;">
+                            <span style="font-size:2.8rem;font-weight:900;color:{color};">{val:.1f}<span style="font-size:1.2rem;">%</span></span>
+                            <span style="font-size:0.9rem;color:{color};font-weight:600;">{label}</span>
+                        </div>
+                        <div style="font-size:0.78rem;color:#888;margin-top:4px;">
+                            {detail_html}
+                        </div>
+                    </div>
+                    <div style="text-align:right;min-width:160px;">
+                        <div style="font-size:0.75rem;color:#888;">历史均值</div>
+                        <div style="font-size:1.2rem;font-weight:700;color:#52514e;">
+                            {sum(h['concentration'] for h in conc_history)/max(len(conc_history),1):.1f}%
+                        </div>
+                        <div style="font-size:0.72rem;color:#888;margin-top:2px;">
+                            近 {len(conc_history)} 个交易日
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # 历史走势图：集中度（上） + 上证指数（下）共享X轴
+            if len(conc_history) >= 2:
+                import plotly.graph_objects as go
+                from plotly.subplots import make_subplots
+
+                df_hist = pd.DataFrame(conc_history)
+                dates = df_hist['date'].tolist()
+
+                # 拉取上证指数近120日数据，与集中度日期对齐
+                @st.cache_data(ttl=3600, show_spinner=False)
+                def _load_sh_index(d_start):
+                    try:
+                        from src.data.market_collector import fetch_major_indices_history
+                        hist = fetch_major_indices_history('sh000001', d_start)
+                        # 标准化为 {date, value}
+                        rows = []
+                        for d, vals in hist.items():
+                            rows.append({'date': d, 'close': float(vals[-1]) if vals else 0})
+                        rows.sort(key=lambda x: x['date'])
+                        return rows
+                    except Exception:
+                        return []
+
+                d_start = conc_history[0]['date'] if conc_history else None
+                sh_history = _load_sh_index(d_start)
+
+                # 把上证指数对齐到集中度日期（用前值填充缺失日）
+                if sh_history:
+                    sh_by_date = {r['date']: r['close'] for r in sh_history}
+                    sh_aligned = []
+                    last_val = None
+                    for d in dates:
+                        if d in sh_by_date:
+                            last_val = sh_by_date[d]
+                        sh_aligned.append(last_val if last_val else None)
+                    # 简单归一化：当日值 / 区间首日值 × 100
+                    base = next((v for v in sh_aligned if v), 100)
+                    sh_indexed = [(v / base * 100) if v else None for v in sh_aligned]
+                else:
+                    sh_indexed = [None] * len(dates)
+
+                # 创建上下双子图，共享X轴
+                fig = make_subplots(
+                    rows=2, cols=1,
+                    shared_xaxes=True,
+                    row_heights=[0.55, 0.45],
+                    vertical_spacing=0.08,
+                )
+
+                # ── 上：集中度 ──
+                fig.add_trace(go.Scatter(
+                    x=dates,
+                    y=df_hist['concentration'],
+                    mode='lines+markers',
+                    name='集中度',
+                    line=dict(color='#667eea', width=2),
+                    marker=dict(size=4, color='#667eea'),
+                    fill='tozeroy',
+                    fillcolor='rgba(102,126,234,0.10)',
+                    hovertemplate='%{x}<br>集中度: %{y:.1f}%<extra></extra>',
+                ), row=1, col=1)
+                fig.add_hrect(y0=45, y1=60, fillcolor='#ec835a', opacity=0.12,
+                              line_width=0, row=1, col=1)
+                fig.add_hline(y=38, line_dash='dash', line_color='#aaa', line_width=1,
+                              annotation_text='38%下限', annotation_font_size=8, annotation_font_color='#888',
+                              row=1, col=1)
+
+                # ── 下：上证指数（归一化）──
+                fig.add_trace(go.Scatter(
+                    x=dates,
+                    y=sh_indexed,
+                    mode='lines',
+                    name='上证指数(归一化)',
+                    line=dict(color='#c00', width=1.6),
+                    fill='tozeroy',
+                    fillcolor='rgba(204,0,0,0.05)',
+                    connectgaps=True,
+                    hovertemplate='%{x}<br>上证: %{y:.2f}<extra></extra>',
+                ), row=2, col=1)
+
+                fig.update_layout(
+                    height=360,
+                    margin=dict(l=6, r=6, t=20, b=10),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(size=9),
+                    showlegend=True,
+                    legend=dict(orientation='h', y=1.06, x=0, font=dict(size=9)),
+                    hovermode='x unified',
+                )
+                # 集中度子图Y轴
+                fig.update_yaxes(
+                    title_text=None, showgrid=True, gridcolor='#f0f0f0',
+                    zeroline=False, range=[20, 60], fixedrange=True,
+                    row=1, col=1,
+                )
+                # 指数子图Y轴
+                fig.update_yaxes(
+                    title_text=None, showgrid=True, gridcolor='#f0f0f0',
+                    zeroline=False, fixedrange=True,
+                    tickformat='.1f',
+                    row=2, col=1,
+                )
+                # X轴：只在底部显示
+                fig.update_xaxes(
+                    showgrid=False, zeroline=False, fixedrange=True,
+                    tickangle=-30, tickfont=dict(size=8), nticks=8,
+                    row=1, col=1,
+                )
+                fig.update_xaxes(
+                    showgrid=False, zeroline=False, fixedrange=True,
+                    tickangle=-30, tickfont=dict(size=8), nticks=8,
+                    row=2, col=1,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 解读
+                latest_val = conc_history[-1]['concentration'] if conc_history else 0
+                if latest_val >= 45:
+                    st.caption(f"当前集中度 {latest_val:.1f}% 已进入历史高风险区间（阈值45%）。市场见顶/风格切换风险较高，建议关注资金轮动信号。", unsafe_allow_html=False)
+                elif latest_val >= 38:
+                    st.caption(f"当前集中度 {latest_val:.1f}% 处于正常区间，市场结构健康。", unsafe_allow_html=False)
+                else:
+                    st.caption(f"当前集中度 {latest_val:.1f}% 偏低，市场资金分散，低量个股活跃。", unsafe_allow_html=False)
+        else:
+            st.info("集中度指标数据获取失败（当前仅支持云端访问），部署后可显示全市场结构监控")
 
         st.divider()
 
@@ -700,7 +902,7 @@ def main():
 
         # ── 左栏：全球市场 ──
         with col_market:
-            st.markdown('<div class="section-title">🌏 市场行情</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title"> 市场行情</div>', unsafe_allow_html=True)
             with st.spinner("加载中..."):
                 try:
                     indices = fetch_major_indices()
@@ -723,10 +925,10 @@ def main():
                         <span style="color:#666;font-size:0.78rem;">{d['price']:.2f}</span>
                     </div>"""
 
-                st.markdown("**📈 A股**", unsafe_allow_html=True)
+                st.markdown("**A股**", unsafe_allow_html=True)
                 for d in a_stocks:
                     st.markdown(render_idx(d), unsafe_allow_html=True)
-                st.markdown("**🌍 全球**", unsafe_allow_html=True)
+                st.markdown("**全球**", unsafe_allow_html=True)
                 for d in g_stocks:
                     st.markdown(render_idx(d), unsafe_allow_html=True)
             else:
@@ -734,7 +936,7 @@ def main():
 
         # ── 中栏：站内个股热度 ──
         with col_rank:
-            st.markdown('<div class="section-title">🔥 站内个股热度</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title"> 站内个股热度</div>', unsafe_allow_html=True)
             shared_cache = get_shared_cache_stats()
             stats = shared_cache.get_stats()
             ranking = shared_cache.get_ranking(limit=8)
@@ -762,7 +964,7 @@ def main():
 
         # ── 右栏：舆情 ──
         with col_sentiment:
-            st.markdown('<div class="section-title">📰 舆情动态</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title"> 舆情动态</div>', unsafe_allow_html=True)
             with st.spinner("加载舆情..."):
                 try:
                     news_data = fetch_news()
@@ -772,7 +974,7 @@ def main():
             tl = news_data.get('timeline', [])[:10]
 
             if tl:
-                st.markdown("**📰 最新资讯**", unsafe_allow_html=True)
+                st.markdown("**最新资讯**", unsafe_allow_html=True)
                 for n in tl:
                     t = n.get('time', '')[5:] if n.get('time') else ''
                     title = n.get('title', '')
@@ -791,9 +993,9 @@ def main():
         with col_q1:
             symbol = st.text_input("输入股票代码查询", placeholder="例如: 000001", label_visibility="collapsed")
         with col_q2:
-            analyze_btn = st.button("🔍 分析", type="primary", use_container_width=True)
+            analyze_btn = st.button("分析", type="primary", use_container_width=True)
         with col_q3:
-            st.page_link("https://www.eastmoney.com", label="📑 财报", icon="📑")
+            st.page_link("https://www.eastmoney.com", label="财报", icon="📑")
 
         if analyze_btn and symbol:
             collectors = init_collectors()
@@ -838,9 +1040,186 @@ def main():
             else:
                 st.error("获取数据失败，请检查股票代码是否正确")
 
+    # ==================== 资金流向 ====================
+    elif page == "资金流向":
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">ETF基金资金流向</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">近30个交易日每日净流入/流出监控</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.spinner("正在加载资金流向数据..."):
+            try:
+                from src.data.market_collector import fetch_etf_data, fetch_etf_daily_flows
+                etf_list = fetch_etf_data()
+                daily_flows = fetch_etf_daily_flows()
+            except Exception as e:
+                etf_list = []
+                daily_flows = {}
+                st.error(f"数据加载失败: {e}")
+
+        import plotly.graph_objects as go
+
+        # ========== 板块资金流向总览 ==========
+        with st.spinner("加载板块资金流向..."):
+            try:
+                from src.data.market_collector import fetch_sector_flow_data
+                sector_flows = fetch_sector_flow_data()
+            except Exception as ex:
+                sector_flows = []
+                _fetch_err = str(ex)
+
+        if not sector_flows:
+            st.warning("板块资金流向数据获取失败（网络或API问题），请稍后刷新重试")
+        else:
+            is_demo = any(s.get('demo') for s in sector_flows)
+            if is_demo:
+                st.info("当前显示演示数据（API暂时不可用），实际数据部署到云端后自动恢复")
+
+            # ── 汇总统计 ────────────────────────────────────────────────
+            in_flows = [s for s in sector_flows if s['flow_yi'] > 0]
+            out_flows = [s for s in sector_flows if s['flow_yi'] < 0]
+            total_in = sum(s['flow_yi'] for s in in_flows)
+            total_out = sum(s['flow_yi'] for s in out_flows)
+            net = total_in + total_out
+            top_flows = sector_flows[:15]
+
+            col_a, col_b, col_c, col_d = st.columns(4)
+            with col_a:
+                st.metric("🔵 资金流入板块", f"{len(in_flows)}个",
+                          f"{total_in:+.1f}亿", delta_color="normal")
+            with col_b:
+                st.metric("🔴 资金流出板块", f"{len(out_flows)}个",
+                          f"{total_out:+.1f}亿", delta_color="normal")
+            with col_c:
+                st.metric("📊 全市场主力净流入", f"{net:+.1f}亿",
+                          delta_color="normal")
+            with col_d:
+                st.metric("🏆 最强净流入", top_flows[0]['name'] if top_flows else "—",
+                          f"{top_flows[0]['flow_yi']:+.1f}亿", delta_color="normal")
+
+            st.markdown("")  # spacer
+            st.markdown("")  # spacer
+
+            # ── 板块主力净流入统计柱状图 ─────────────────────────────────
+            # ── 板块主力净流入统计柱状图（高→低排序）─────────────────────────
+            sorted_sectors = sorted(sector_flows, key=lambda x: x['flow_yi'], reverse=True)
+            # Plotly horizontal bar 默认从下到上 → reverse 让最高在最上
+            sorted_sectors = list(reversed(sorted_sectors))
+
+            fig_bar = go.Figure()
+            fig_bar.add_trace(go.Bar(
+                x=[s['flow_yi'] for s in sorted_sectors],
+                y=[s['name'] for s in sorted_sectors],
+                orientation='h',
+                marker_color=['rgba(140,160,140,0.65)' if s['flow_yi'] >= 0 else 'rgba(170,130,130,0.65)' for s in sorted_sectors],
+                text=[f"{s['flow_yi']:+.1f}" for s in sorted_sectors],
+                textposition='outside',
+                textfont=dict(size=9, color='#6a7785'),
+                hovertemplate='%{y}<br>净流入: %{x:+.1f}亿<extra></extra>',
+            ))
+            fig_bar.update_layout(
+                height=max(300, len(sorted_sectors) * 28),
+                margin=dict(l=8, r=60, t=8, b=8),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(size=9, color='#6a7785'),
+                showlegend=False,
+                xaxis=dict(
+                    title=None, showgrid=True, gridcolor='#e8ebee',
+                    zeroline=True, zerolinecolor='#c8d0d8', zerolinewidth=1,
+                ),
+                yaxis=dict(
+                    title=None, showgrid=False, tickfont=dict(size=9),
+                    categoryorder='array', categoryarray=[s['name'] for s in sorted_sectors],
+                ),
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        if etf_list:
+            rows = []
+            for i in range(0, len(etf_list), 3):
+                rows.append(etf_list[i:i+3])
+
+            for row_etfs in rows:
+                cols = st.columns(3)
+                for ci, row_etf in enumerate(row_etfs):
+                    with cols[ci]:
+                        code = row_etf['code']
+                        name = row_etf['name']
+                        price = row_etf['price']
+                        pct = row_etf['change_pct']
+                        sign = '+' if pct >= 0 else ''
+                        pct_color = '#c00' if pct > 0 else ('#1F4E79' if pct < 0 else '#888')
+
+                        daily = daily_flows.get(code, [])
+                        dates = [d['date'][5:] for d in daily]
+                        values = [d['flow'] for d in daily]
+                        bar_colors = ['#1F4E79' if v >= 0 else '#dc3545' for v in values]
+                        max_abs = max(abs(v) for v in values) if values else 1
+
+                        # 近30日合计
+                        total_30d = sum(values)
+                        total_str = f"{total_30d:+,.1f}亿"
+
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=dates,
+                            y=values,
+                            marker_color=bar_colors,
+                            text=[f"{v:+.0f}" if abs(v) >= 10 else f"{v:+.1f}" for v in values],
+                            textposition='outside',
+                            textfont_size=7,
+                            hovertemplate="%{x}<br>净流入: %{y:+.1f}亿<extra></extra>",
+                        ))
+                        fig.update_layout(
+                            height=160,
+                            margin=dict(l=4, r=4, t=4, b=4),
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            font=dict(size=9),
+                            showlegend=False,
+                            xaxis=dict(tickangle=-30, showgrid=False, zeroline=False, tickfont=dict(size=7), type='category'),
+                            yaxis=dict(
+                                title=None, showgrid=True, gridcolor='#f0f0f0',
+                                zeroline=True, zerolinecolor='#ccc',
+                                range=[-max_abs * 1.3, max_abs * 1.3],
+                                tickfont=dict(size=7),
+                            ),
+                        )
+
+                        card_html = f'''
+                        <div style="background:white;border-radius:10px;padding:12px 12px 8px;margin:4px 0;box-shadow:0 1px 6px rgba(0,0,0,0.08);border-top:3px solid {pct_color};">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+                                <div>
+                                    <div style="font-weight:700;font-size:0.88rem;color:#1a1a2e;">{name}</div>
+                                    <div style="font-size:1.4rem;font-weight:700;color:#1a1a2e;line-height:1.1;">{price:.3f}</div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-size:1rem;font-weight:700;color:{pct_color};">{sign}{pct:.2f}%</div>
+                                    <div style="font-size:0.68rem;color:#888;">{'资金流入' if pct >= 0 else '资金流出'}</div>
+                                </div>
+                            </div>
+                            <div style="background:#f8f9fa;border-radius:6px;padding:6px 8px;text-align:center;margin-bottom:4px;">
+                                <div style="font-size:0.68rem;color:#888;">近30日净流入合计</div>
+                                <div style="font-size:1rem;font-weight:700;color:{'#1F4E79' if total_30d >= 0 else '#dc3545'};">{total_str}</div>
+                            </div>
+                        </div>
+                        '''
+                        st.markdown(card_html, unsafe_allow_html=True)
+                        st.plotly_chart(fig, use_container_width=True)
+
+        st.caption("柱状图蓝色=资金流入，红色=资金流出；数据基于每日成交额与涨跌幅估算")
+
     # ==================== 财务分析 ====================
     elif page == "财务分析":
-        st.markdown("### 财务分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">财务分析</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">多维度财报指标与估值分析</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         symbols_input = st.text_area("股票代码（每行一个）", placeholder="000001\n000002\n600000", height=100)
 
@@ -898,7 +1277,12 @@ def main():
 
     # ==================== 投资组合 ====================
     elif page == "投资组合":
-        st.markdown("### 投资组合优化")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">投资组合优化</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">均值-方差优化与风险平价模型</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         symbols_input = st.text_area("股票池（每行一个）", placeholder="000001\n000002\n600000\n000858", height=120)
 
@@ -977,7 +1361,12 @@ def main():
 
     # ==================== 风险分析 ====================
     elif page == "风险分析":
-        st.markdown("### 风险分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">风险分析</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">Altman Z-Score / Ohlson O-Score / M-Score 多维风控模型</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         symbols_input = st.text_area("股票代码（每行一个）", placeholder="000001\n000002\n600000", height=100)
         analysis_mode = st.radio("分析模式", ["综合风险分析", "联合风控分析"])
@@ -1250,9 +1639,14 @@ def main():
 
     # ==================== PDF年报分析 ====================
     elif page == "PDF年报分析":
-        st.markdown("### 综合年报分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">PDF年报分析</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">年报文本风险解读与智能解析</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-        tab1, tab2 = st.tabs(["🔍 综合年报分析", "📊 榜单统计"])
+        tab1, tab2 = st.tabs(["综合年报分析", "榜单统计"])
 
         # -------------------- TAB1: 综合年报分析 --------------------
         with tab1:
@@ -1341,7 +1735,7 @@ def main():
                             """, unsafe_allow_html=True)
                             st.markdown(report)
 
-                            if st.button("📥 导出报告", key="export_report"):
+                            if st.button("导出报告", key="export_report"):
                                 try:
                                     from reportlab.lib.pagesizes import A4
                                     from reportlab.lib.styles import getSampleStyleSheet
@@ -1442,7 +1836,12 @@ def main():
 
     # ==================== 公告解读 ====================
     elif page == "公告解读":
-        st.markdown("### 📋 公司公告解读")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">公告解读</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">上市公司公告智能分类与摘要</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("""
         <div style="background:#f5f6f8;border-radius:12px;padding:15px;margin-bottom:20px;">
@@ -1471,9 +1870,9 @@ def main():
 
         col_fetch, col_clear = st.columns([1, 1])
         with col_fetch:
-            fetchClicked = st.button("🔍 抓取公告", type="primary", width='stretch')
+            fetchClicked = st.button("抓取公告", type="primary", width='stretch')
         with col_clear:
-            if st.button("🗑 清空", width='stretch'):
+            if st.button("清空", width='stretch'):
                 st.session_state['ann_anns'] = None
                 st.session_state['ann_symbol'] = ""
                 st.session_state['ann_analysis'] = None
@@ -1504,7 +1903,7 @@ def main():
             st.divider()
 
             # ===== 综合AI解读 =====
-            if st.button("🧠 AI综合解读全部公告", type="primary"):
+            if st.button("AI综合解读全部公告", type="primary"):
                 with st.spinner("正在深度分析..."):
                     agent = AnnouncementAgent(get_api_key())
                     st.session_state['ann_analysis'] = agent.analyze(
@@ -1531,7 +1930,7 @@ def main():
                     # 预计算的意图标签
                     intent = _classify_intent(ann['title'], ann['category'])
                     if intent:
-                        st.info(f"💡 AI初步判断：{intent}")
+                        st.info(f"AI初步判断：{intent}")
 
                     if ann.get('url'):
                         st.markdown(f"[🔗 查看原文]({ann['url']})")
@@ -1540,12 +1939,12 @@ def main():
                     ann_content_key = f"ann_content_{i}"
                     cached = st.session_state.get(ann_content_key)
                     if cached:
-                        with st.expander("📄 公告内容", expanded=True):
+                        with st.expander("公告内容", expanded=True):
                             st.text(cached)
                     else:
                         col_btn, col_status = st.columns([1, 3])
                         with col_btn:
-                            if st.button("📖 获取内容", key=f"fetch_{i}", width='stretch'):
+                            if st.button("获取内容", key=f"fetch_{i}", width='stretch'):
                                 with st.spinner("正在获取内容..."):
                                     content = _fetch_ann_content(ann)
                                     st.session_state[ann_content_key] = content
@@ -1556,7 +1955,7 @@ def main():
                     # 深度解读按钮
                     col_ai, col_spacer = st.columns([1, 3])
                     with col_ai:
-                        if st.button("🤖 深度解读", key=f"ai_{i}"):
+                        if st.button("深度解读", key=f"ai_{i}"):
                             with st.spinner("正在解读..."):
                                 agent = AnnouncementAgent(get_api_key())
                                 result = agent.analyze_single(ann, company_name="")
@@ -1574,7 +1973,12 @@ def main():
 
     # ==================== 多智能体协作 ====================
     elif page == "多智能体协作":
-        st.markdown("### AutoGen 多智能体协作分析")
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">多智能体协作</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">AutoGen 框架下的智能体协作分析系统</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.info("""
         本系统使用 AutoGen 框架构建多智能体协作分析系统:
@@ -1647,6 +2051,605 @@ def main():
                     <div>{result.get('investment_advice', '暂无建议')}</div>
                 </div>
                 """, unsafe_allow_html=True)
+
+
+    # ==================== 个股交易数据 ====================
+    elif page == "个股交易数据":
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">个股交易数据</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">资金流向 · 融资融券 · 大宗交易 · 股东/高管增减持 · 股票回购</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_input, col_limit = st.columns([2, 1])
+        with col_input:
+            stock_code = st.text_input(
+                "股票代码",
+                value=st.session_state.get("stock_trade_code", "688825"),
+                placeholder="例如 688825 / sh688825 / sz000001",
+                help="默认 688825（长鑫科技）。6 位数字自动识别交易所。",
+                key="stock_trade_code",
+            )
+        with col_limit:
+            limit = st.select_slider(
+                "返回条数",
+                options=[10, 20, 30, 50, 100],
+                value=st.session_state.get("stock_trade_limit", 20),
+                key="stock_trade_limit",
+            )
+
+        st.caption("数据来源：财汇金融与风险数据 MCP · 缓存 60 分钟 · 切换股票或条数后自动重新拉取")
+
+        tab_labels = ["资金流向", "融资融券", "大宗交易", "股东增减持", "高管增减持", "股票回购"]
+        tabs = st.tabs(tab_labels)
+
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _load(code: str, lim: int, kind: str):
+            if kind == "flow":   return fetch_capital_flow(code, lim)
+            if kind == "margin": return fetch_margin_trading(code, lim)
+            if kind == "block":  return fetch_block_trades(code, lim)
+            if kind == "share":  return fetch_shareholders_trading(code, lim)
+            if kind == "exec":   return fetch_executive_trading(code, lim)
+            if kind == "repur":  return fetch_repurchase(code, lim)
+            raise ValueError(kind)
+
+        def _format_for_table(df, head_info):
+            """表格显示版本:中文列名 + 单位后缀 + 数值格式化
+            - 元(金额) -> 万元,列名后缀 (万元)  (除价格/均价外)
+            - 元(价格) -> 元,列名后缀 (元)
+            - 已是万元/万股/股/% 的列名后缀沿用
+            """
+            if df is None or df.empty or not head_info:
+                return df.copy() if df is not None else None
+            show = df.copy()
+            # 1) field -> 中文名
+            name_map = {h["field"]: h.get("name") or h["field"] for h in head_info}
+            show = show.rename(columns=name_map)
+            # 2) 单位=元 的列: 数值转换 + 列名后缀用"实际显示的单位"
+            to_drop = []
+            for h in head_info:
+                col = h.get("name") or h["field"]
+                unit = h.get("unit")
+                if unit != "元" or col not in show.columns:
+                    continue
+                is_price = any(k in col for k in ("价格", "均价"))
+                display_unit = "元" if is_price else "万元"
+                target = f"{col}({display_unit})"
+                if is_price:
+                    show[target] = show[col].apply(
+                        lambda v: f"{float(v):.2f}" if v not in (None, "", "-") else "-"
+                    )
+                else:
+                    show[target] = show[col].apply(
+                        lambda v: f"{float(v) / 10000:.2f}" if v not in (None, "", "-") else "-"
+                    )
+                to_drop.append(col)
+            show = show.drop(columns=to_drop)
+            # 3) 给其他有单位(非%)的列加后缀
+            for h in head_info:
+                col = h.get("name") or h["field"]
+                unit = h.get("unit")
+                if col in show.columns and unit and unit not in ("%", None):
+                    show = show.rename(columns={col: f"{col}({unit})"})
+            return show
+
+        def _viz_flow(df, head_info):
+            """资金流向可视化:4 张图环环相扣
+            1) 环状图: 当日各级别净流入占比 (越大单越深蓝)
+            2) 折线图: 各级别净流入趋势(亿元) - 越大单越深蓝
+            3) 堆叠柱状图: 各级别净流入正负堆叠 (直观看出谁在买谁在卖)
+            4) 双向柱状图: 当日各级别 流入 vs 流出 对比 (大单在买还是卖)
+            """
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+
+            # 单子大小排序:超大单 > 大单 > 中单 > 小单 (越大越深)
+            levels = [
+                ("超大单", "super_large_order_net_inflow",
+                 "super_large_order_buy_amt", "super_large_order_sell_amt"),
+                ("大单",   "large_order_net_inflow",
+                 "large_order_buy_amt", "large_order_sell_amt"),
+                ("中单",   "medium_order_net_inflow",
+                 "medium_order_buy_amt", "medium_order_sell_amt"),
+                ("小单",   "small_order_net_inflow",
+                 "small_order_buy_amt", "small_order_sell_amt"),
+            ]
+            # 越大单颜色越深 (深蓝 -> 浅蓝)
+            size_colors = ["#0d3b66", "#1f5f8b", "#3d8bb5", "#7fb3d5"]
+
+            date_col = "trade_date" if "trade_date" in df.columns else df.columns[3]
+            df_plot = df.sort_values(date_col).reset_index(drop=True)
+
+            # 元 -> 万元;支持标量 / Series / 数组
+            def _to_wan(val):
+                if val is None:
+                    return 0.0
+                s = pd.Series(val) if not isinstance(val, pd.Series) else val.copy()
+                s = pd.to_numeric(s, errors="coerce").fillna(0)
+                if s.size <= 1:
+                    return float(s.iloc[0]) / 10000 if s.size == 1 else 0.0
+                return s.div(10000)
+
+            # ===== 图 1 + 2: 环状图 + 折线图 (上一行) =====
+            latest = df_plot.iloc[-1]
+            pie_labels, pie_values = [], []
+            for i, (label, net_f, _, _) in enumerate(levels):
+                if net_f in df_plot.columns:
+                    v = latest[net_f]
+                    try: v_num = abs(float(v))
+                    except (TypeError, ValueError): v_num = 0
+                    if v_num > 0:
+                        pie_labels.append(label)
+                        pie_values.append(v_num)
+
+            fig_top = make_subplots(rows=1, cols=2, specs=[[{"type": "domain"}, {"type": "xy"}]],
+                                    subplot_titles=("当日各级别净流入占比(万元)", "各级别净流入趋势(万元)"),
+                                    column_widths=[0.32, 0.68])
+            if pie_values:
+                pie_wan = [v / 10000 for v in pie_values]
+                pie_color_seq = [size_colors[levels.index((l, f, b, s))]
+                                 for l, f, b, s in levels
+                                 if f in df_plot.columns and l in pie_labels]
+                fig_top.add_trace(go.Pie(
+                    labels=pie_labels, values=pie_wan, hole=0.55,
+                    marker=dict(colors=pie_color_seq),
+                    textinfo="label+percent",
+                    hovertemplate="%{label}: %{value:.2f}万元<extra></extra>",
+                ), 1, 1)
+            for i, (label, net_f, _, _) in enumerate(levels):
+                if net_f in df_plot.columns:
+                    y = _to_wan(df_plot[net_f]).tolist()
+                    fig_top.add_trace(go.Scatter(
+                        x=df_plot[date_col], y=y,
+                        mode="lines+markers", name=label,
+                        line=dict(color=size_colors[i], width=2.2),
+                        marker=dict(size=6, color=size_colors[i],
+                                    line=dict(color="white", width=1)),
+                    ), 1, 2)
+            fig_top.update_layout(height=340, showlegend=True,
+                                  legend=dict(orientation="h", yanchor="bottom", y=-0.2,
+                                              xanchor="center", x=0.5),
+                                  margin=dict(l=20, r=20, t=50, b=50))
+            fig_top.update_xaxes(title_text="日期", row=1, col=2)
+            fig_top.update_yaxes(title_text="净流入(万元)", row=1, col=2)
+            st.plotly_chart(fig_top, width="stretch")
+
+            # ===== 图 3: 各级别净流入正负堆叠柱状图 (大单/特大单 在买卖 vs 散户) =====
+            st.caption("各级别净流入堆叠(正负分色,单位:万元):直观看出哪天是大单在买卖 vs 散户在买卖")
+            fig_stack = go.Figure()
+            for i, (label, net_f, _, _) in enumerate(levels):
+                if net_f not in df_plot.columns:
+                    continue
+                y = _to_wan(df_plot[net_f]).tolist()
+                fig_stack.add_trace(go.Bar(
+                    x=df_plot[date_col], y=y, name=label,
+                    marker_color=size_colors[i],
+                    hovertemplate="%{x}<br>" + label + " 净流入: %{y:.2f}万元<extra></extra>",
+                ))
+            fig_stack.update_layout(
+                barmode="relative",
+                height=320, title="各级别净流入柱状图(万元)",
+                xaxis_title="日期", yaxis_title="净流入(万元)",
+                legend=dict(orientation="h", yanchor="bottom", y=-0.25,
+                            xanchor="center", x=0.5),
+                margin=dict(l=20, r=20, t=50, b=50),
+            )
+            st.plotly_chart(fig_stack, width="stretch")
+
+            # ===== 图 4: 当日各级别 流入 vs 流出 分组柱状图 =====
+            st.caption("当日各级别 买入 vs 卖出 金额(万元):大单/特大单主导的方向,就是机构态度")
+            if all(b in df_plot.columns and s in df_plot.columns
+                   for _, _, b, s in levels):
+                today = df_plot.iloc[-1]
+                fig_io = go.Figure()
+                buy_vals = [_to_wan(today[b]) for _, _, b, _ in levels]
+                sell_vals = [_to_wan(today[s]) for _, _, _, s in levels]
+                labels = [l for l, _, _, _ in levels]
+                fig_io.add_trace(go.Bar(
+                    name="买入金额", x=labels, y=buy_vals,
+                    marker_color="#1f5f8b",
+                    text=[f"{v:.2f}" for v in buy_vals], textposition="outside",
+                    hovertemplate="%{x} 买入: %{y:.2f}万元<extra></extra>",
+                ))
+                fig_io.add_trace(go.Bar(
+                    name="卖出金额", x=labels, y=sell_vals,
+                    marker_color="#c47a5a",
+                    text=[f"{v:.2f}" for v in sell_vals], textposition="outside",
+                    hovertemplate="%{x} 卖出: %{y:.2f}万元<extra></extra>",
+                ))
+                fig_io.update_layout(
+                    barmode="group", height=320,
+                    title=f"{today[date_col]} 各级别买卖对比(亿元)",
+                    yaxis_title="金额(亿元)",
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.2,
+                                xanchor="center", x=0.5),
+                    margin=dict(l=20, r=20, t=50, b=40),
+                )
+                st.plotly_chart(fig_io, width="stretch")
+
+        def _viz_margin(df, head_info):
+            """融资融券:融资余额/融券余额/融资融券余额 折线图(万元,源数据已是万元)"""
+            import plotly.graph_objects as go
+            date_col = "trade_date" if "trade_date" in df.columns else df.columns[2]
+            df_plot = df.sort_values(date_col).reset_index(drop=True)
+            # 融资融券原数据单位就是"万元",直接用
+            fields = [
+                ("融资余额", "margin_balance"),
+                ("融券余额", "lending_balance"),
+                ("融资融券余额", "margin_lending_balance"),
+            ]
+            fig = go.Figure()
+            colors = ["#1f4e79", "#b8232f", "#6a4a8a"]
+            for i, (label, f) in enumerate(fields):
+                if f in df_plot.columns:
+                    y = pd.to_numeric(df_plot[f], errors="coerce").fillna(0).tolist()
+                    fig.add_trace(go.Scatter(x=df_plot[date_col], y=y, mode="lines+markers",
+                                             name=label, line=dict(color=colors[i], width=2.2),
+                                             marker=dict(size=6, color=colors[i],
+                                                         line=dict(color="white", width=1)),
+                                             hovertemplate="%{x}<br>" + label + ": %{y:.2f}万元<extra></extra>"))
+            fig.update_layout(height=380, title="融资融券余额趋势(万元)",
+                              xaxis_title="日期", yaxis_title="金额(万元)",
+                              margin=dict(l=20, r=20, t=50, b=40))
+            st.plotly_chart(fig, width="stretch")
+
+        def _viz_block(df, head_info):
+            """大宗交易:成交金额柱状图(万元)"""
+            import plotly.graph_objects as go
+            date_col = "trade_date" if "trade_date" in df.columns else df.columns[2]
+            df_plot = df.sort_values(date_col, ascending=False).reset_index(drop=True)
+            fig = go.Figure()
+            if "block_trade_amount" in df_plot.columns:
+                y = pd.to_numeric(df_plot["block_trade_amount"], errors="coerce").fillna(0).tolist()
+                fig.add_trace(go.Bar(
+                    x=df_plot[date_col].tolist(),
+                    y=y,
+                    marker_color="#1f4e79",
+                    text=[f"{v:.0f}" for v in y], textposition="outside",
+                    hovertemplate="%{x}<br>成交金额: %{y:.2f}万元<extra></extra>",
+                ))
+            fig.update_layout(height=380, title="大宗交易成交金额(万元)",
+                              xaxis_title="交易日期", yaxis_title="成交金额(万元)",
+                              margin=dict(l=20, r=20, t=50, b=40))
+            st.plotly_chart(fig, width="stretch")
+
+        def _render(df, tab_name, head_info):
+            if df is None or df.empty:
+                st.info("暂无数据（该股票可能无可披露记录，或数据源返回空集）")
+                return
+            # 1) 表格(中文列名 + 单位后缀 + 数值格式化)
+            show = _format_for_table(df, head_info)
+            st.dataframe(show, width="stretch", hide_index=True, height=360)
+            # 2) 可视化
+            try:
+                if tab_name == "资金流向":
+                    _viz_flow(df, head_info)
+                elif tab_name == "融资融券":
+                    _viz_margin(df, head_info)
+                elif tab_name == "大宗交易":
+                    _viz_block(df, head_info)
+            except Exception as e:
+                st.caption(f"可视化渲染失败(不影响表格): {e}")
+
+        kinds = ["flow", "margin", "block", "share", "exec", "repur"]
+        for tab, kind, name in zip(tabs, kinds, tab_labels):
+            with tab:
+                try:
+                    with st.spinner(f"正在拉取{name}..."):
+                        df = _load(stock_code.strip(), int(limit), kind)
+                    head_info = df.attrs.get("head_info") if df is not None else None
+                    _render(df, name, head_info)
+                except Exception as e:
+                    st.warning(f"{name}获取失败:{e}")
+                    if st.button(f"重试 {name}", key=f"retry_{kind}"):
+                        st.cache_data.clear()
+                        st.rerun()
+
+
+    # ==================== 企业关系查询 ====================
+    elif page == "企业关系查询":
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">企业关系查询</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">供应链 · 招投标 · 对外投资 · 融资 · 担保 · 股权出质</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_in, col_lim = st.columns([3, 1])
+        with col_in:
+            company_name = st.text_input(
+                "公司名称",
+                value=st.session_state.get("company_rel_name", "北京蓝箭鸿擎科技有限公司"),
+                placeholder="如:长鑫科技 / 兆易创新 / 比亚迪",
+                help="支持公司全称/简称/股票代码/统一信用代码。默认示例:北京蓝箭鸿擎科技有限公司",
+                key="company_rel_name",
+            )
+        with col_lim:
+            limit = st.select_slider(
+                "返回条数",
+                options=[10, 20, 30, 50],
+                value=st.session_state.get("company_rel_limit", 20),
+                key="company_rel_limit",
+            )
+
+        st.caption("数据来源:财汇金融与风险数据 MCP · 缓存 60 分钟")
+
+        # 6 类关系 + 加载器(都用模块顶层缓存的 _load_company_rel,带 retry)
+        tab_labels = ["供应链(供/需)", "招投标", "对外投资", "融资(PE/VC)", "担保关系", "股权出质"]
+        tab_kinds  = ["supplier",    "tender",   "invest",     "pevc",          "guar",       "pledge"]
+
+        def _head_lookup(head_info):
+            """field -> {name, unit}"""
+            if not head_info:
+                return {}
+            return {h["field"]: h for h in head_info}
+
+        def _render_table(df, name):
+            if df is None or df.empty:
+                st.info(f"该公司在「{name}」维度暂无公开数据")
+                return
+            show = df.copy()
+            head = _head_lookup(df.attrs.get("head_info"))
+            if head:
+                name_map = {f: (h.get("name") or f) for f, h in head.items()}
+                show = show.rename(columns=name_map)
+                for f, h in head.items():
+                    cn = h.get("name") or f
+                    unit = h.get("unit")
+                    if cn in show.columns and unit and unit not in ("%", None):
+                        show = show.rename(columns={cn: f"{cn}({unit})"})
+            st.dataframe(show, width="stretch", hide_index=True, height=300)
+
+        # ===== 8 类关系串行拉取(财汇 MCP 对并发限流,实测并行比串行慢)
+        # 保留:模块顶层 cache + 2 次 retry + 进度条
+        all_kinds_for_summary = tab_kinds + ["customer", "bid"]
+        summary_results: dict = {}
+
+        progress = st.progress(0.0, text="准备拉取 8 类关系...")
+        status_box = st.empty()
+        done_count = 0
+        total = len(all_kinds_for_summary)
+
+        for k in all_kinds_for_summary:
+            try:
+                summary_results[k] = _load_company_rel_with_retry(
+                    company_name.strip(), int(limit), k, retries=2,
+                )
+            except Exception as e:
+                summary_results[k] = None
+                status_box.warning(f"⚠️ {k} 拉取失败:{type(e).__name__}: {str(e)[:80]}")
+            finally:
+                done_count += 1
+                progress.progress(
+                    done_count / total,
+                    text=f"已拉取 {done_count}/{total} 类关系",
+                )
+
+        progress.empty()
+        status_box.empty()
+
+        # 汇总条数
+        kind_label = {
+            "supplier": "供应商", "customer": "客户",
+            "tender":   "招标",   "bid":      "投标",
+            "invest":   "对外投资", "pevc":    "PE/VC 融资",
+            "guar":     "担保关系", "pledge":  "股权出质",
+        }
+        nonzero = [(kind_label[k], len(df)) for k, df in summary_results.items() if df is not None and len(df) > 0]
+        if nonzero:
+            chips = " · ".join(f"{n} **{c}**" for n, c in nonzero)
+            st.success(f"已找到数据:{chips}")
+        else:
+            st.warning("该公司在财汇数据库中未找到任何关联关系记录。请尝试其他公司(如「比亚迪」「长鑫科技」「兆易创新」)。")
+
+        # 6 个 tab
+        tabs = st.tabs(tab_labels)
+
+        # 供应链 tab: 供应商 + 客户
+        with tabs[0]:
+            _render_table(summary_results.get("supplier"), "供应商 (上游)")
+            _render_table(summary_results.get("customer"), "客户 (下游)")
+
+        # 招投标 tab: 招标 + 投标
+        with tabs[1]:
+            _render_table(summary_results.get("tender"), "招标记录 (招别人)")
+            _render_table(summary_results.get("bid"),    "投标记录 (投别人)")
+
+        # 剩余 4 tab
+        single_kind_map = {
+            "对外投资":   "invest",
+            "融资(PE/VC)": "pevc",
+            "担保关系":   "guar",
+            "股权出质":   "pledge",
+        }
+        for tab, name in zip(tabs[2:], single_kind_map.keys()):
+            with tab:
+                _render_table(summary_results.get(single_kind_map[name]), name)
+
+        # ===== 关系网络图 =====
+        st.divider()
+        st.markdown("### 关系网络图")
+        st.caption("汇总上述 8 类关系,以主公司为中心,周围节点为关联方;边颜色对应关系类型")
+
+        try:
+            import plotly.graph_objects as go
+            import math
+
+            company_clean = company_name.strip()
+            edge_colors = {
+                "供应商":   "#1f5f8b",
+                "客户":     "#0d3b66",
+                "招标":     "#7a5c00",
+                "投标":     "#b8860b",
+                "融资":     "#2e7d32",
+                "投资":     "#6a4a8a",
+                "担保":     "#b8232f",
+                "股权出质": "#c25a1a",
+            }
+
+            def _pick_col(df, hints_en, hints_zh):
+                """先按英文列名查,再按中文列名查"""
+                if df is None or df.empty:
+                    return None
+                cols = list(df.columns)
+                for kw in hints_en:
+                    for c in cols:
+                        if kw in str(c).lower():
+                            return c
+                for kw in hints_zh:
+                    for c in cols:
+                        if kw in str(c):
+                            return c
+                return None
+
+            def _flatten_investor_info(v):
+                """investor_info 形如 [['公司名', '9111...'], ...] → ['公司名', ...]"""
+                names = []
+                if v is None:
+                    return names
+                if isinstance(v, list):
+                    for item in v:
+                        if isinstance(item, list) and item:
+                            names.append(str(item[0]))
+                        elif item:
+                            names.append(str(item))
+                else:
+                    s = str(v).strip()
+                    if s and s != company_clean:
+                        names.append(s)
+                return names
+
+            def _extract_names(df, hints_en, hints_zh, flat_investor=False, max_n=20):
+                if df is None or df.empty:
+                    return []
+                col = _pick_col(df, hints_en, hints_zh)
+                if not col:
+                    return []
+                out = []
+                for v in df[col].tolist():
+                    if flat_investor:
+                        for n in _flatten_investor_info(v):
+                            if n and n != company_clean and n not in out:
+                                out.append(n)
+                                if len(out) >= max_n:
+                                    return out
+                    else:
+                        s = "" if v is None else str(v).strip()
+                        if s and s != company_clean and s not in out:
+                            out.append(s)
+                            if len(out) >= max_n:
+                                return out
+                return out
+
+            # 财汇对方公司字段均为嵌套 list `[[公司名, 信用代码], ...]`,
+            # 所以全部用 flat_investor=True + 正确的英文列名
+            sup_names = _extract_names(summary_results.get("supplier"),
+                                       ["supplier_name", "supplier"],
+                                       ["供应商", "对方", "公司名称", "交易对手"],
+                                       flat_investor=True)
+            cus_names = _extract_names(summary_results.get("customer"),
+                                       ["client_name", "customer", "client"],
+                                       ["客户", "对方", "公司名称", "交易对手"],
+                                       flat_investor=True)
+            ten_names = _extract_names(summary_results.get("tender"),
+                                       ["tenderer_info", "tenderer"],
+                                       ["招标人", "对方", "公司名称"],
+                                       flat_investor=True)
+            bid_names = _extract_names(summary_results.get("bid"),
+                                       ["tenderer_info", "tenderer"],
+                                       ["招标人", "对方", "公司名称"],
+                                       flat_investor=True)
+            pev_names = _extract_names(summary_results.get("pevc"),
+                                       ["investor_info", "investor"],
+                                       ["投资方", "投资机构", "公司名称"],
+                                       flat_investor=True)
+            inv_names = _extract_names(summary_results.get("invest"),
+                                       ["project_subject", "investee", "project_name"],
+                                       ["被投资", "项目主体", "公司名称", "对方"],
+                                       flat_investor=True)
+            gua_names = _extract_names(summary_results.get("guar"),
+                                       ["guarantor_info", "guaranteed_party_info",
+                                        "guarantor", "guaranteed_party"],
+                                       ["担保方", "被担保方", "对方", "公司名称"],
+                                       flat_investor=True)
+            ple_names = _extract_names(summary_results.get("pledge"),
+                                       ["pledgee_info", "pledgee"],
+                                       ["质权人", "对方", "公司名称"],
+                                       flat_investor=True)
+
+            edges = ([(company_clean, n, "供应商")   for n in sup_names]
+                   + [(company_clean, n, "客户")     for n in cus_names]
+                   + [(company_clean, n, "招标")     for n in ten_names]
+                   + [(company_clean, n, "投标")     for n in bid_names]
+                   + [(company_clean, n, "融资")     for n in pev_names]
+                   + [(company_clean, n, "投资")     for n in inv_names]
+                   + [(company_clean, n, "担保")     for n in gua_names]
+                   + [(company_clean, n, "股权出质") for n in ple_names])
+
+            if not edges:
+                st.info("该公司在 8 类关系中均未找到关联公司,无法绘制关系图")
+            else:
+                all_targets = sorted({t for _, t, _ in edges})
+                R = 1.0
+                positions = {company_clean: (0, 0)}
+                for i, name in enumerate(all_targets):
+                    angle = 2 * math.pi * i / max(len(all_targets), 1)
+                    positions[name] = (R * math.cos(angle), R * math.sin(angle))
+
+                edge_traces = []
+                for rel, color in edge_colors.items():
+                    xs, ys = [], []
+                    for s, t, r in edges:
+                        if r != rel: continue
+                        x0, y0 = positions[s]
+                        x1, y1 = positions[t]
+                        xs += [x0, x1, None]
+                        ys += [y0, y1, None]
+                    if xs:
+                        edge_traces.append(go.Scatter(
+                            x=xs, y=ys, mode="lines",
+                            line=dict(color=color, width=1.6),
+                            name=f"{rel}({sum(1 for e in edges if e[2]==rel)})",
+                            hoverinfo="none", opacity=0.8,
+                        ))
+
+                node_x = [positions[n][0] for n in [company_clean] + all_targets]
+                node_y = [positions[n][1] for n in [company_clean] + all_targets]
+                node_text = [company_clean] + all_targets
+                node_size = [26] + [12] * len(all_targets)
+                node_color = ["#d03b3b"] + ["#7d8b9c"] * len(all_targets)
+                node_trace = go.Scatter(
+                    x=node_x, y=node_y, mode="markers+text",
+                    text=node_text, textposition="top center",
+                    marker=dict(size=node_size, color=node_color,
+                                line=dict(color="white", width=2)),
+                    hoverinfo="text", showlegend=False,
+                )
+
+                fig_net = go.Figure(data=edge_traces + [node_trace])
+                fig_net.update_layout(
+                    title=f"{company_clean} · 关系网络 ({len(edges)} 条关系, {len(all_targets)} 家关联方)",
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.15,
+                                xanchor="center", x=0.5, font=dict(size=11)),
+                    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                    height=560,
+                    margin=dict(l=20, r=20, t=60, b=60),
+                    plot_bgcolor="#fafbfc",
+                )
+                st.plotly_chart(fig_net, width="stretch")
+                legend_html = " | ".join(
+                    f"<span style='color:{c}'>■</span> {n}" for n, c in edge_colors.items()
+                )
+                st.markdown(
+                    f"<div style='font-size:0.85rem; color:#666;'>图例:{legend_html} · 红色节点=主公司 · 灰色节点=关联方</div>",
+                    unsafe_allow_html=True,
+                )
+        except Exception as e:
+            st.warning(f"关系网络图渲染失败:{e}")
+
 
 if __name__ == "__main__":
     main()
