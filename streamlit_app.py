@@ -580,6 +580,40 @@ def display_stock_ranking():
     else:
         st.info("暂无热度数据")
 
+
+# ---------------------------------------------------------------------------
+# 模块顶层缓存函数 — 必须在 page block 之外定义,否则 @st.cache_data 行为不可靠
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_company_rel(company: str, lim: int, kind: str):
+    """8 类企业关系查询的统一缓存加载器。
+    定义在模块顶层,确保 streamlit cache_data 的源码 hash 永远稳定。"""
+    if kind == "supplier":  return fetch_company_suppliers(company, lim)
+    if kind == "customer":  return fetch_company_customers(company, lim)
+    if kind == "tender":    return fetch_company_tendering(company, lim)
+    if kind == "bid":       return fetch_company_bidding(company, lim)
+    if kind == "invest":    return fetch_company_investment_projects(company, lim)
+    if kind == "pevc":      return fetch_company_pe_vc(company, lim)
+    if kind == "guar":      return fetch_company_guarantee_events(company, lim)
+    if kind == "pledge":    return fetch_company_equity_pledge(company, lim)
+    raise ValueError(kind)
+
+
+def _load_company_rel_with_retry(company: str, lim: int, kind: str, retries: int = 2):
+    """带超时 + 重试的加载包装(单次失败不影响其他类)。"""
+    import time as _time
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            return _load_company_rel(company, lim, kind)
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                _time.sleep(0.5 * (attempt + 1))  # 0.5s, 1s
+    raise last_err
+
+
 # 主应用
 def main():
     with st.sidebar:
@@ -2341,22 +2375,9 @@ def main():
 
         st.caption("数据来源:财汇金融与风险数据 MCP · 缓存 60 分钟")
 
-        # 6 类关系 + 加载器
+        # 6 类关系 + 加载器(都用模块顶层缓存的 _load_company_rel,带 retry)
         tab_labels = ["供应链(供/需)", "招投标", "对外投资", "融资(PE/VC)", "担保关系", "股权出质"]
         tab_kinds  = ["supplier",    "tender",   "invest",     "pevc",          "guar",       "pledge"]
-        tab_bid_kind = "bid"  # 招投标 tab 里的"投标"额外加载
-
-        @st.cache_data(ttl=3600, show_spinner=False)
-        def _load_company(company: str, lim: int, kind: str):
-            if kind == "supplier":  return fetch_company_suppliers(company, lim)
-            if kind == "customer":  return fetch_company_customers(company, lim)
-            if kind == "tender":    return fetch_company_tendering(company, lim)
-            if kind == "bid":       return fetch_company_bidding(company, lim)
-            if kind == "invest":    return fetch_company_investment_projects(company, lim)
-            if kind == "pevc":      return fetch_company_pe_vc(company, lim)
-            if kind == "guar":      return fetch_company_guarantee_events(company, lim)
-            if kind == "pledge":    return fetch_company_equity_pledge(company, lim)
-            raise ValueError(kind)
 
         def _head_lookup(head_info):
             """field -> {name, unit}"""
@@ -2380,15 +2401,33 @@ def main():
                         show = show.rename(columns={cn: f"{cn}({unit})"})
             st.dataframe(show, width="stretch", hide_index=True, height=300)
 
-        # 顶部数据量汇总(并行拉取,带 spinner)
+        # ===== 8 类关系串行拉取(财汇 MCP 对并发限流,实测并行比串行慢)
+        # 保留:模块顶层 cache + 2 次 retry + 进度条
         all_kinds_for_summary = tab_kinds + ["customer", "bid"]
-        summary_results = {}
-        with st.spinner("正在拉取全部 8 类关系..."):
-            for k in all_kinds_for_summary:
-                try:
-                    summary_results[k] = _load_company(company_name.strip(), int(limit), k)
-                except Exception as e:
-                    summary_results[k] = None
+        summary_results: dict = {}
+
+        progress = st.progress(0.0, text="准备拉取 8 类关系...")
+        status_box = st.empty()
+        done_count = 0
+        total = len(all_kinds_for_summary)
+
+        for k in all_kinds_for_summary:
+            try:
+                summary_results[k] = _load_company_rel_with_retry(
+                    company_name.strip(), int(limit), k, retries=2,
+                )
+            except Exception as e:
+                summary_results[k] = None
+                status_box.warning(f"⚠️ {k} 拉取失败:{type(e).__name__}: {str(e)[:80]}")
+            finally:
+                done_count += 1
+                progress.progress(
+                    done_count / total,
+                    text=f"已拉取 {done_count}/{total} 类关系",
+                )
+
+        progress.empty()
+        status_box.empty()
 
         # 汇总条数
         kind_label = {
