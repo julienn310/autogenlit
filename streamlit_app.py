@@ -622,7 +622,7 @@ def main():
         st.success("API Key 已配置")
         st.divider()
         page = st.radio("导航", [
-            "仪表板", "资金流向", "财务分析", "个股交易数据", "企业关系查询", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
+            "仪表板", "资金流向", "财务分析", "个股交易数据", "企业关系查询", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作", "🔧 诊断"
         ], index=0)
         st.divider()
         st.caption("系统状态: 正常运行")
@@ -2649,6 +2649,167 @@ def main():
                 )
         except Exception as e:
             st.warning(f"关系网络图渲染失败:{e}")
+
+
+
+    # ==================== 诊断页面 ====================
+    elif page == "🔧 诊断":
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">部署诊断</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">云端 / 本地环境 · API Key · MCP 连通性</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── 1. 运行环境信息 ──
+        st.subheader("1. 运行环境")
+        try:
+            import platform, socket
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.write(f"**Python**: `{platform.python_version()}`")
+                st.write(f"**平台**: `{platform.platform()[:40]}`")
+            with c2:
+                st.write(f"**Hostname**: `{socket.gethostname()}`")
+                try:
+                    ip = socket.gethostbyname(socket.gethostname())
+                    st.write(f"**本机 IP**: `{ip}`")
+                except Exception:
+                    st.write("**本机 IP**: 无法解析")
+            with c3:
+                import streamlit as _stv
+                st.write(f"**Streamlit**: `{_stv.__version__}`")
+        except Exception as e:
+            st.error(f"环境信息获取失败: {e}")
+
+        st.divider()
+
+        # ── 2. API Key 双重来源检查 ──
+        st.subheader("2. API Key 读取情况(双重 fallback)")
+
+        st.write("**来源 A: `st.secrets`(云端推荐)**")
+        try:
+            import streamlit as _sts
+            if hasattr(_sts, "secrets") and "CAIHUI_MCP_API_KEY" in _sts.secrets:
+                v = str(_sts.secrets["CAIHUI_MCP_API_KEY"])
+                st.success(f"✓ 读到 · 长度 {len(v)} · 头 `{v[:8]}` · 尾 `{v[-4:]}`")
+                masked = v[:6] + "*" * max(0, len(v) - 10) + v[-4:] if len(v) >= 10 else "(太短)"
+                st.code(f"完整值(打码): {masked}", language="text")
+            else:
+                st.error("✗ st.secrets 里找不到 CAIHUI_MCP_API_KEY")
+                st.write("→ 回云端 Settings → Secrets,确认 key 名拼写正确,等号两边有空格,值用双引号")
+        except Exception as e:
+            st.error(f"读 st.secrets 异常: {type(e).__name__}: {e}")
+
+        st.write("**来源 B: `os.environ`(本机 export)**")
+        v_env = os.environ.get("CAIHUI_MCP_API_KEY", "")
+        if v_env:
+            st.success(f"✓ 读到 · 长度 {len(v_env)} · 头 `{v_env[:8]}` · 尾 `{v_env[-4:]}`")
+        else:
+            st.info("ℹ️ os.environ 里没有(云端正常,本机需要 export)")
+
+        st.write("**finchina_collector._get_api_key() 实际拿到什么**")
+        try:
+            from src.data.finchina_collector import _get_api_key as _gak
+            v_actual = _gak()
+            st.success(f"✓ 拿到 · 长度 {len(v_actual)} · 头 `{v_actual[:8]}` · 尾 `{v_actual[-4:]}`")
+        except Exception as e:
+            st.error(f"✗ 拿不到: {e}")
+
+        st.divider()
+
+        # ── 3. MCP 直连测试 ──
+        st.subheader("3. 财汇 MCP 直连测试")
+        st.caption("用当前 _get_api_key() 实际打一次,看 server 怎么回")
+
+        col_btn, col_kind = st.columns([1, 3])
+        with col_btn:
+            do_test = st.button("🚀 跑一次测试", type="primary", key="diag_run")
+        with col_kind:
+            test_kind = st.selectbox("测试类型", [
+                "list_tools (列工具,最轻量)",
+                "supplier (拉一家公司,验证完整链路)",
+            ], key="diag_kind")
+
+        if do_test:
+            with st.spinner("正在打财汇 MCP..."):
+                import requests as _req
+                try:
+                    from src.data.finchina_collector import _get_api_key as _gak2
+                    key = _gak2()
+                    if test_kind.startswith("list_tools"):
+                        payload = {"jsonrpc": "2.0", "id": 99, "method": "tools/list", "params": {}}
+                    else:
+                        payload = {
+                            "jsonrpc": "2.0", "id": 99, "method": "tools/call",
+                            "params": {
+                                "name": "execute_tool",
+                                "arguments": {
+                                    "tool_name": "get_company_suppliers",
+                                    "arguments": {"target_company": ["比亚迪"], "limit": 1},
+                                },
+                            },
+                        }
+                    masked_key = key[:6] + "*" * max(0, len(key) - 10) + key[-4:] if len(key) >= 10 else "(太短)"
+                    st.write("**请求头(打码)**:")
+                    st.code(
+                        f"x-api-key: {masked_key}\nContent-Type: application/json\nAccept: application/json, text/event-stream",
+                        language="http",
+                    )
+
+                    resp = _req.post(
+                        "https://mcp.finchina.com/finchina-data-mcp-server/mcp",
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/event-stream",
+                            "x-api-key": key,
+                        },
+                        json=payload, timeout=15,
+                    )
+                    st.write(f"**HTTP 状态码**: `{resp.status_code}`")
+                    st.write("**响应体(前 1000 字符)**:")
+                    body = resp.text[:1000]
+                    try:
+                        st.json(resp.json())
+                    except Exception:
+                        st.code(body, language="text")
+                except Exception as e:
+                    st.error(f"测试失败: {type(e).__name__}: {e}")
+
+        st.divider()
+
+        # ── 4. 关键 import 检查 ──
+        st.subheader("4. 关键模块/依赖")
+        mods = ["requests", "pandas", "plotly", "streamlit",
+                "src.data.finchina_collector", "src.data.market_collector"]
+        for m in mods:
+            try:
+                __import__(m)
+                st.write(f"✓ `{m}`")
+            except Exception as e:
+                st.write(f"✗ `{m}`: {type(e).__name__}: {str(e)[:80]}")
+
+        st.divider()
+
+        # ── 5. 明文 key 扫描 ──
+        st.subheader("5. 代码里明文 key 扫描")
+        st.caption("如果之前把 key 写进了 streamlit_app.py / .env 并 push 了 git,这里会扫到")
+        import re
+        for path in ["streamlit_app.py", "src/data/finchina_collector.py",
+                      ".env", ".env.example", "render.yaml"]:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                hits = re.findall(r"sk-[a-zA-Z0-9]{20,}", text)
+                if hits:
+                    masked = [h[:6] + "***" + h[-4:] for h in hits]
+                    st.warning(f"⚠️ `{path}` 里有疑似 key: {masked}")
+                else:
+                    st.write(f"✓ `{path}` 无明文 key")
+            except FileNotFoundError:
+                st.write(f"ℹ️ `{path}` 不存在")
+            except Exception as e:
+                st.write(f"? `{path}` 读失败: {e}")
 
 
 if __name__ == "__main__":
