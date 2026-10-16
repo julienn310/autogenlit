@@ -27,15 +27,24 @@ class FinchinaMCPError(Exception):
 # ---------------------------------------------------------------------------
 # 内部辅助
 # ---------------------------------------------------------------------------
-
 def _get_api_key() -> str:
+    # 优先:Streamlit Secrets(云端推荐,启动时一次性注入,稳定)
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "CAIHUI_MCP_API_KEY" in st.secrets:
+            key = str(st.secrets["CAIHUI_MCP_API_KEY"]).strip()
+            if key:
+                return key
+    except Exception:
+        pass
+    # Fallback:环境变量(本机 export 场景)
     key = os.environ.get("CAIHUI_MCP_API_KEY", "").strip()
     if not key:
         raise FinchinaMCPError(
-            "环境变量 CAIHUI_MCP_API_KEY 未设置。请 export 该变量后重启 Streamlit。"
+            "CAIHUI_MCP_API_KEY 未设置。请在 Streamlit Cloud 的 Settings → Secrets 配置,"
+            "或在本机 export CAIHUI_MCP_API_KEY=... 后重启 Streamlit。"
         )
     return key
-
 
 def _normalize_code(stock_code: str) -> str:
     """剥离 sh/sz 前缀与空白"""
