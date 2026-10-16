@@ -27,17 +27,19 @@ class FinchinaMCPError(Exception):
 # ---------------------------------------------------------------------------
 # 内部辅助
 # ---------------------------------------------------------------------------
+
 def _get_api_key() -> str:
-    # 优先:Streamlit Secrets(云端推荐,启动时一次性注入,稳定)
+    """按优先级读取 key:st.secrets (云端) > os.environ (本机)"""
+    # 1) 优先:Streamlit Secrets(云端推荐)
     try:
-        import streamlit as st
-        if hasattr(st, "secrets") and "CAIHUI_MCP_API_KEY" in st.secrets:
-            key = str(st.secrets["CAIHUI_MCP_API_KEY"]).strip()
-            if key:
-                return key
+        import streamlit as _st
+        if hasattr(_st, "secrets") and "CAIHUI_MCP_API_KEY" in _st.secrets:
+            v = str(_st.secrets["CAIHUI_MCP_API_KEY"]).strip()
+            if v:
+                return v
     except Exception:
         pass
-    # Fallback:环境变量(本机 export 场景)
+    # 2) Fallback:环境变量(本机 export)
     key = os.environ.get("CAIHUI_MCP_API_KEY", "").strip()
     if not key:
         raise FinchinaMCPError(
@@ -45,6 +47,7 @@ def _get_api_key() -> str:
             "或在本机 export CAIHUI_MCP_API_KEY=... 后重启 Streamlit。"
         )
     return key
+
 
 def _normalize_code(stock_code: str) -> str:
     """剥离 sh/sz 前缀与空白"""
