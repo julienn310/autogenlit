@@ -237,3 +237,8 @@ def fetch_company_equity_pledge(company_name: str, limit: int = 30) -> pd.DataFr
 def fetch_company_receivable_financing(company_name: str, limit: int = 30) -> pd.DataFrame:
     """公司应收账款融资"""
     return _fetch_company("get_company_receivable_financing_details", company_name, limit, request_id=18)
+
+
+def fetch_company_suspected_relationships(company_name: str, limit: int = 30) -> pd.DataFrame:
+    """企业疑似关系 — 算法推断(共同股东/共同高管/共同电话/共同地址/控股链等)"""
+    return _fetch_company("get_company_suspected_relationships", company_name, limit, request_id=19)
