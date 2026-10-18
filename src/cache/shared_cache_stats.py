@@ -37,7 +37,6 @@ _lock = threading.Lock()
 
 # 内存降级存储
 _memory_stats = {"total_hits": 0, "total_misses": 0}
-_memory_cache = {}
 
 # 基础热度股票（共56次，随机分配）
 random.seed(42)
@@ -48,6 +47,13 @@ diff = 56 - sum(_BASE_COUNTS)
 _BASE_COUNTS[0] += diff
 BASE_HOT_STOCKS = {code: {"name": name, "count": count}
                    for code, name, count in zip(_BASE_CODES, _BASE_NAMES, _BASE_COUNTS)}
+
+# 内存降级时也初始化基础热度（MongoDB连不上时的fallback）
+_memory_cache = {code: {
+    "data": {"info": {"name": info["name"]}},
+    "cached_at": time.time(),
+    "analysis_count": info["count"],
+} for code, info in BASE_HOT_STOCKS.items()}
 
 # 全局单例 MongoClient
 _mongo_client = None  # type: Optional[MongoClient]

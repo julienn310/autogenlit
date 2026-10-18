@@ -47,6 +47,16 @@ from src.data.finchina_collector import (
     fetch_company_guarantee_events,
     fetch_company_equity_pledge,
     fetch_company_receivable_financing,
+    fetch_company_suspected_relationships,
+)
+
+# UI 动画模块
+from src.ui.animations import (
+    animated_title, loading_pulse, loading_orb, loading_wave_bars,
+    skeleton_table, skeleton_cards, animated_metric, hover_card,
+    animated_progress, gradient_banner, section_divider,
+    mesh_background, badge, rolling_number,
+    floating_particles, glowing_card, sparkle_icon, skeleton_advanced,
 )
 
 # 页面配置
@@ -587,7 +597,7 @@ def display_stock_ranking():
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_company_rel(company: str, lim: int, kind: str):
-    """8 类企业关系查询的统一缓存加载器。
+    """9 类企业关系查询的统一缓存加载器。
     定义在模块顶层,确保 streamlit cache_data 的源码 hash 永远稳定。"""
     if kind == "supplier":  return fetch_company_suppliers(company, lim)
     if kind == "customer":  return fetch_company_customers(company, lim)
@@ -597,6 +607,7 @@ def _load_company_rel(company: str, lim: int, kind: str):
     if kind == "pevc":      return fetch_company_pe_vc(company, lim)
     if kind == "guar":      return fetch_company_guarantee_events(company, lim)
     if kind == "pledge":    return fetch_company_equity_pledge(company, lim)
+    if kind == "suspected": return fetch_company_suspected_relationships(company, lim)
     raise ValueError(kind)
 
 
@@ -616,32 +627,50 @@ def _load_company_rel_with_retry(company: str, lim: int, kind: str, retries: int
 
 # 主应用
 def main():
+    # 全局 mesh 渐变背景
+    st.markdown(mesh_background(), unsafe_allow_html=True)
+
     with st.sidebar:
         st.markdown("### AutoGen 金融分析")
         st.divider()
         st.success("API Key 已配置")
         st.divider()
         page = st.radio("导航", [
-            "仪表板", "资金流向", "财务分析", "个股交易数据", "企业关系查询", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作"
+            "仪表板", "量化策略", "资金流向", "财务分析", "个股交易数据", "企业关系查询", "投资组合", "风险分析", "PDF年报分析", "公告解读", "多智能体协作", "诊断"
         ], index=0)
         st.divider()
         st.caption("系统状态: 正常运行")
 
     # ==================== 仪表板 ====================
     if page == "仪表板":
-        # ── 紧凑标题行 ──
-        st.markdown("""
-        <div class="main-header" style="padding:18px 26px;margin-bottom:12px;">
-            <h2 style="margin:0;">A股智能体分析系统</h2>
-            <p style="margin:6px 0 0 0;opacity:0.85;">二级市场深度交易数据 · 企业关系网络 · AutoGen 多智能体协作</p>
-        </div>
-        """, unsafe_allow_html=True)
+        # ── 渐变 banner + 动态光标 + 浮动粒子 ──
+        st.markdown(gradient_banner(
+            "A股智能体分析系统",
+            "二级市场深度交易数据 · 企业关系网络 · AutoGen 多智能体协作",
+            icon="📈",
+        ), unsafe_allow_html=True)
+        st.markdown(floating_particles(), unsafe_allow_html=True)
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric("覆盖股票", "5000+", "实时行情")
-        with col2: st.metric("数据源", "3 路", "新浪 / 腾讯 / 财汇")
-        with col3: st.metric("分析维度", "30+", "资金/关系/财务/风险")
-        with col4: st.metric("智能体", "4 个", "AutoGen 协作")
+        # 4 个 metric 数字滚动
+        cols = st.columns(4)
+        with cols[0]:
+            st.markdown(rolling_number(5000, "覆盖股票", 1200) + badge("实时") +
+                        "<div style='color:#64748b;font-size:0.78rem;margin-top:4px;'>A 股 / 港股 / 美股</div>",
+                        unsafe_allow_html=True)
+        with cols[1]:
+            st.markdown(rolling_number(4, "数据源", 800) + badge("多源") +
+                        "<div style='color:#64748b;font-size:0.78rem;margin-top:4px;'>财汇 · 新浪 · 腾讯 · Akshare</div>",
+                        unsafe_allow_html=True)
+        with cols[2]:
+            st.markdown(rolling_number(35, "分析维度", 1500) + badge("30+") +
+                        "<div style='color:#64748b;font-size:0.78rem;margin-top:4px;'>资金 / 关系 / 财务 / 风险</div>",
+                        unsafe_allow_html=True)
+        with cols[3]:
+            st.markdown(rolling_number(4, "智能体", 1000) + badge("AutoGen") +
+                        "<div style='color:#64748b;font-size:0.78rem;margin-top:4px;'>分析师 / 风控 / 策略 / 评审</div>",
+                        unsafe_allow_html=True)
+
+        st.markdown("<br/>", unsafe_allow_html=True)
 
         # ── 特色功能区(2 行 chip,8 个) ──
         st.markdown("""
@@ -902,7 +931,7 @@ def main():
 
         # ── 左栏：全球市场 ──
         with col_market:
-            st.markdown('<div class="section-title"> 市场行情</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">' + sparkle_icon() + ' 市场行情</div>', unsafe_allow_html=True)
             with st.spinner("加载中..."):
                 try:
                     indices = fetch_major_indices()
@@ -936,7 +965,7 @@ def main():
 
         # ── 中栏：站内个股热度 ──
         with col_rank:
-            st.markdown('<div class="section-title"> 站内个股热度</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">' + sparkle_icon('#f59e0b') + ' 站内个股热度</div>', unsafe_allow_html=True)
             shared_cache = get_shared_cache_stats()
             stats = shared_cache.get_stats()
             ranking = shared_cache.get_ranking(limit=8)
@@ -964,7 +993,7 @@ def main():
 
         # ── 右栏：舆情 ──
         with col_sentiment:
-            st.markdown('<div class="section-title"> 舆情动态</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">' + sparkle_icon('#10b981') + ' 舆情动态</div>', unsafe_allow_html=True)
             with st.spinner("加载舆情..."):
                 try:
                     news_data = fetch_news()
@@ -1885,12 +1914,15 @@ def main():
         if fetchClicked and ann_symbol:
             ann_symbol = ann_symbol.strip()
             st.session_state['ann_symbol'] = ann_symbol
-            with st.spinner("正在抓取公告..."):
-                anns = fetch_announcements(ann_symbol, days=ann_days)
-                st.session_state['ann_anns'] = anns
-                st.session_state['ann_analysis'] = None
-                st.session_state['ann_selected'] = None
-                st.session_state['ann_selected_result'] = None
+            placeholder = st.empty()
+            with placeholder:
+                st.markdown(loading_orb(f"正在抓取 {ann_symbol} 的公告"), unsafe_allow_html=True)
+            anns = fetch_announcements(ann_symbol, days=ann_days)
+            placeholder.empty()
+            st.session_state['ann_anns'] = anns
+            st.session_state['ann_analysis'] = None
+            st.session_state['ann_selected'] = None
+            st.session_state['ann_selected_result'] = None
 
         if anns:
             from collections import Counter
@@ -1956,9 +1988,12 @@ def main():
                     col_ai, col_spacer = st.columns([1, 3])
                     with col_ai:
                         if st.button("深度解读", key=f"ai_{i}"):
-                            with st.spinner("正在解读..."):
-                                agent = AnnouncementAgent(get_api_key())
-                                result = agent.analyze_single(ann, company_name="")
+                            placeholder = st.empty()
+                            with placeholder:
+                                st.markdown(loading_wave_bars("AI 智能体深度解读"), unsafe_allow_html=True)
+                            agent = AnnouncementAgent(get_api_key())
+                            result = agent.analyze_single(ann, company_name="")
+                            placeholder.empty()
                             st.session_state['ann_selected_result'] = result
                             st.session_state['ann_selected'] = ann_key
 
@@ -2336,8 +2371,11 @@ def main():
         for tab, kind, name in zip(tabs, kinds, tab_labels):
             with tab:
                 try:
-                    with st.spinner(f"正在拉取{name}..."):
-                        df = _load(stock_code.strip(), int(limit), kind)
+                    placeholder = st.empty()
+                    with placeholder:
+                        st.markdown(loading_orb(f"正在拉取{name}"), unsafe_allow_html=True)
+                    df = _load(stock_code.strip(), int(limit), kind)
+                    placeholder.empty()
                     head_info = df.attrs.get("head_info") if df is not None else None
                     _render(df, name, head_info)
                 except Exception as e:
@@ -2376,8 +2414,8 @@ def main():
         st.caption("数据来源:财汇金融与风险数据 MCP · 缓存 60 分钟")
 
         # 6 类关系 + 加载器(都用模块顶层缓存的 _load_company_rel,带 retry)
-        tab_labels = ["供应链(供/需)", "招投标", "对外投资", "融资(PE/VC)", "担保关系", "股权出质"]
-        tab_kinds  = ["supplier",    "tender",   "invest",     "pevc",          "guar",       "pledge"]
+        tab_labels = ["供应链(供/需)", "招投标", "对外投资", "融资(PE/VC)", "担保关系", "股权出质", "疑似关系"]
+        tab_kinds  = ["supplier",    "tender",   "invest",     "pevc",          "guar",       "pledge",     "suspected"]
 
         def _head_lookup(head_info):
             """field -> {name, unit}"""
@@ -2431,10 +2469,11 @@ def main():
 
         # 汇总条数
         kind_label = {
-            "supplier": "供应商", "customer": "客户",
-            "tender":   "招标",   "bid":      "投标",
-            "invest":   "对外投资", "pevc":    "PE/VC 融资",
-            "guar":     "担保关系", "pledge":  "股权出质",
+            "supplier":  "供应商",   "customer": "客户",
+            "tender":    "招标",     "bid":      "投标",
+            "invest":    "对外投资", "pevc":     "PE/VC 融资",
+            "guar":      "担保关系", "pledge":   "股权出质",
+            "suspected": "疑似关系",
         }
         nonzero = [(kind_label[k], len(df)) for k, df in summary_results.items() if df is not None and len(df) > 0]
         if nonzero:
@@ -2456,21 +2495,24 @@ def main():
             _render_table(summary_results.get("tender"), "招标记录 (招别人)")
             _render_table(summary_results.get("bid"),    "投标记录 (投别人)")
 
-        # 剩余 4 tab
+        # 剩余 5 tab
         single_kind_map = {
             "对外投资":   "invest",
             "融资(PE/VC)": "pevc",
             "担保关系":   "guar",
             "股权出质":   "pledge",
+            "疑似关系":   "suspected",
         }
         for tab, name in zip(tabs[2:], single_kind_map.keys()):
             with tab:
+                if name == "疑似关系":
+                    st.caption("基于共同股东/共同高管/共同电话/共同地址/控股链等算法的推断关系")
                 _render_table(summary_results.get(single_kind_map[name]), name)
 
         # ===== 关系网络图 =====
         st.divider()
         st.markdown("### 关系网络图")
-        st.caption("汇总上述 8 类关系,以主公司为中心,周围节点为关联方;边颜色对应关系类型")
+        st.caption("汇总上述 9 类关系,以主公司为中心,周围节点为关联方;边颜色对应关系类型")
 
         try:
             import plotly.graph_objects as go
@@ -2486,6 +2528,7 @@ def main():
                 "投资":     "#6a4a8a",
                 "担保":     "#b8232f",
                 "股权出质": "#c25a1a",
+                "疑似关系": "#9aa0a6",  # 灰色,网络图里用虚线
             }
 
             def _pick_col(df, hints_en, hints_zh):
@@ -2577,6 +2620,10 @@ def main():
                                        ["pledgee_info", "pledgee"],
                                        ["质权人", "对方", "公司名称"],
                                        flat_investor=True)
+            sus_names = _extract_names(summary_results.get("suspected"),
+                                       ["suspect_relation_name", "suspect_relation"],
+                                       ["疑似关系企业名称", "对方", "公司名称"],
+                                       flat_investor=True)
 
             edges = ([(company_clean, n, "供应商")   for n in sup_names]
                    + [(company_clean, n, "客户")     for n in cus_names]
@@ -2585,10 +2632,11 @@ def main():
                    + [(company_clean, n, "融资")     for n in pev_names]
                    + [(company_clean, n, "投资")     for n in inv_names]
                    + [(company_clean, n, "担保")     for n in gua_names]
-                   + [(company_clean, n, "股权出质") for n in ple_names])
+                   + [(company_clean, n, "股权出质") for n in ple_names]
+                   + [(company_clean, n, "疑似关系") for n in sus_names])
 
             if not edges:
-                st.info("该公司在 8 类关系中均未找到关联公司,无法绘制关系图")
+                st.info("该公司在 9 类关系中均未找到关联公司,无法绘制关系图")
             else:
                 all_targets = sorted({t for _, t, _ in edges})
                 R = 1.0
@@ -2607,9 +2655,13 @@ def main():
                         xs += [x0, x1, None]
                         ys += [y0, y1, None]
                     if xs:
+                        # 疑似关系用虚线表示(算法推断,非确认关系)
+                        line_kwargs = dict(color=color, width=1.6)
+                        if rel == "疑似关系":
+                            line_kwargs["dash"] = "dash"
                         edge_traces.append(go.Scatter(
                             x=xs, y=ys, mode="lines",
-                            line=dict(color=color, width=1.6),
+                            line=line_kwargs,
                             name=f"{rel}({sum(1 for e in edges if e[2]==rel)})",
                             hoverinfo="none", opacity=0.8,
                         ))
@@ -2649,6 +2701,174 @@ def main():
                 )
         except Exception as e:
             st.warning(f"关系网络图渲染失败:{e}")
+
+
+
+    # ==================== 量化策略页面 ====================
+    elif page == "量化策略":
+        from src.strategy.page import render_quant_strategy_page
+        render_quant_strategy_page(st.session_state)
+
+
+
+    # ==================== 诊断页面 ====================
+    elif page == "🔧 诊断":
+        st.markdown("""
+        <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
+            <h2 style="margin:0;">部署诊断</h2>
+            <p style="margin:5px 0 0 0;opacity:0.85;">云端 / 本地环境 · API Key · MCP 连通性</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── 1. 运行环境信息 ──
+        st.subheader("1. 运行环境")
+        try:
+            import platform, socket
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.write(f"**Python**: `{platform.python_version()}`")
+                st.write(f"**平台**: `{platform.platform()[:40]}`")
+            with c2:
+                st.write(f"**Hostname**: `{socket.gethostname()}`")
+                try:
+                    ip = socket.gethostbyname(socket.gethostname())
+                    st.write(f"**本机 IP**: `{ip}`")
+                except Exception:
+                    st.write("**本机 IP**: 无法解析")
+            with c3:
+                import streamlit as _stv
+                st.write(f"**Streamlit**: `{_stv.__version__}`")
+        except Exception as e:
+            st.error(f"环境信息获取失败: {e}")
+
+        st.divider()
+
+        # ── 2. API Key 双重来源检查 ──
+        st.subheader("2. API Key 读取情况(双重 fallback)")
+
+        st.write("**来源 A: `st.secrets`(云端推荐)**")
+        try:
+            import streamlit as _sts
+            if hasattr(_sts, "secrets") and "CAIHUI_MCP_API_KEY" in _sts.secrets:
+                v = str(_sts.secrets["CAIHUI_MCP_API_KEY"])
+                st.success(f"✓ 读到 · 长度 {len(v)} · 头 `{v[:8]}` · 尾 `{v[-4:]}`")
+                masked = v[:6] + "*" * max(0, len(v) - 10) + v[-4:] if len(v) >= 10 else "(太短)"
+                st.code(f"完整值(打码): {masked}", language="text")
+            else:
+                st.error("✗ st.secrets 里找不到 CAIHUI_MCP_API_KEY")
+                st.write("→ 回云端 Settings → Secrets,确认 key 名拼写正确,等号两边有空格,值用双引号")
+        except Exception as e:
+            st.error(f"读 st.secrets 异常: {type(e).__name__}: {e}")
+
+        st.write("**来源 B: `os.environ`(本机 export)**")
+        v_env = os.environ.get("CAIHUI_MCP_API_KEY", "")
+        if v_env:
+            st.success(f"✓ 读到 · 长度 {len(v_env)} · 头 `{v_env[:8]}` · 尾 `{v_env[-4:]}`")
+        else:
+            st.info("ℹ️ os.environ 里没有(云端正常,本机需要 export)")
+
+        st.write("**finchina_collector._get_api_key() 实际拿到什么**")
+        try:
+            from src.data.finchina_collector import _get_api_key as _gak
+            v_actual = _gak()
+            st.success(f"✓ 拿到 · 长度 {len(v_actual)} · 头 `{v_actual[:8]}` · 尾 `{v_actual[-4:]}`")
+        except Exception as e:
+            st.error(f"✗ 拿不到: {e}")
+
+        st.divider()
+
+        # ── 3. MCP 直连测试 ──
+        st.subheader("3. 财汇 MCP 直连测试")
+        st.caption("用当前 _get_api_key() 实际打一次,看 server 怎么回")
+
+        col_btn, col_kind = st.columns([1, 3])
+        with col_btn:
+            do_test = st.button("🚀 跑一次测试", type="primary", key="diag_run")
+        with col_kind:
+            test_kind = st.selectbox("测试类型", [
+                "list_tools (列工具,最轻量)",
+                "supplier (拉一家公司,验证完整链路)",
+            ], key="diag_kind")
+
+        if do_test:
+            with st.spinner("正在打财汇 MCP..."):
+                import requests as _req
+                try:
+                    from src.data.finchina_collector import _get_api_key as _gak2
+                    key = _gak2()
+                    if test_kind.startswith("list_tools"):
+                        payload = {"jsonrpc": "2.0", "id": 99, "method": "tools/list", "params": {}}
+                    else:
+                        payload = {
+                            "jsonrpc": "2.0", "id": 99, "method": "tools/call",
+                            "params": {
+                                "name": "execute_tool",
+                                "arguments": {
+                                    "tool_name": "get_company_suppliers",
+                                    "arguments": {"target_company": ["比亚迪"], "limit": 1},
+                                },
+                            },
+                        }
+                    masked_key = key[:6] + "*" * max(0, len(key) - 10) + key[-4:] if len(key) >= 10 else "(太短)"
+                    st.write("**请求头(打码)**:")
+                    st.code(
+                        f"x-api-key: {masked_key}\nContent-Type: application/json\nAccept: application/json, text/event-stream",
+                        language="http",
+                    )
+
+                    resp = _req.post(
+                        "https://mcp.finchina.com/finchina-data-mcp-server/mcp",
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/event-stream",
+                            "x-api-key": key,
+                        },
+                        json=payload, timeout=15,
+                    )
+                    st.write(f"**HTTP 状态码**: `{resp.status_code}`")
+                    st.write("**响应体(前 1000 字符)**:")
+                    body = resp.text[:1000]
+                    try:
+                        st.json(resp.json())
+                    except Exception:
+                        st.code(body, language="text")
+                except Exception as e:
+                    st.error(f"测试失败: {type(e).__name__}: {e}")
+
+        st.divider()
+
+        # ── 4. 关键 import 检查 ──
+        st.subheader("4. 关键模块/依赖")
+        mods = ["requests", "pandas", "plotly", "streamlit",
+                "src.data.finchina_collector", "src.data.market_collector"]
+        for m in mods:
+            try:
+                __import__(m)
+                st.write(f"✓ `{m}`")
+            except Exception as e:
+                st.write(f"✗ `{m}`: {type(e).__name__}: {str(e)[:80]}")
+
+        st.divider()
+
+        # ── 5. 明文 key 扫描 ──
+        st.subheader("5. 代码里明文 key 扫描")
+        st.caption("如果之前把 key 写进了 streamlit_app.py / .env 并 push 了 git,这里会扫到")
+        import re
+        for path in ["streamlit_app.py", "src/data/finchina_collector.py",
+                      ".env", ".env.example", "render.yaml"]:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                hits = re.findall(r"sk-[a-zA-Z0-9]{20,}", text)
+                if hits:
+                    masked = [h[:6] + "***" + h[-4:] for h in hits]
+                    st.warning(f"⚠️ `{path}` 里有疑似 key: {masked}")
+                else:
+                    st.write(f"✓ `{path}` 无明文 key")
+            except FileNotFoundError:
+                st.write(f"ℹ️ `{path}` 不存在")
+            except Exception as e:
+                st.write(f"? `{path}` 读失败: {e}")
 
 
 if __name__ == "__main__":
