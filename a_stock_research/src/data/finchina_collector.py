@@ -29,10 +29,22 @@ class FinchinaMCPError(Exception):
 # ---------------------------------------------------------------------------
 
 def _get_api_key() -> str:
+    """按优先级读取 key:st.secrets (云端) > os.environ (本机)"""
+    # 1) 优先:Streamlit Secrets(云端推荐)
+    try:
+        import streamlit as _st
+        if hasattr(_st, "secrets") and "CAIHUI_MCP_API_KEY" in _st.secrets:
+            v = str(_st.secrets["CAIHUI_MCP_API_KEY"]).strip()
+            if v:
+                return v
+    except Exception:
+        pass
+    # 2) Fallback:环境变量(本机 export)
     key = os.environ.get("CAIHUI_MCP_API_KEY", "").strip()
     if not key:
         raise FinchinaMCPError(
-            "环境变量 CAIHUI_MCP_API_KEY 未设置。请 export 该变量后重启 Streamlit。"
+            "CAIHUI_MCP_API_KEY 未设置。请在 Streamlit Cloud 的 Settings → Secrets 配置,"
+            "或在本机 export CAIHUI_MCP_API_KEY=... 后重启 Streamlit。"
         )
     return key
 
@@ -225,3 +237,8 @@ def fetch_company_equity_pledge(company_name: str, limit: int = 30) -> pd.DataFr
 def fetch_company_receivable_financing(company_name: str, limit: int = 30) -> pd.DataFrame:
     """公司应收账款融资"""
     return _fetch_company("get_company_receivable_financing_details", company_name, limit, request_id=18)
+
+
+def fetch_company_suspected_relationships(company_name: str, limit: int = 30) -> pd.DataFrame:
+    """企业疑似关系 — 算法推断(共同股东/共同高管/共同电话/共同地址/控股链等)"""
+    return _fetch_company("get_company_suspected_relationships", company_name, limit, request_id=19)

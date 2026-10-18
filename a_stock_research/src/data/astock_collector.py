@@ -420,9 +420,24 @@ class AStockDataCollector:
             pass
         return {}
 
-    def collect_stock_data(self, symbol: str, period: str = "1y") -> Dict[str, Any]:
+    def collect_stock_data(
+        self,
+        symbol: str,
+        period: str = "1y",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> Dict[str, Any]:
         """
         收集股票完整数据
+
+        Parameters
+        ----------
+        symbol : str
+            股票代码 (如 "000001")
+        period : str
+            周期 ("1y" / "6mo" / "3mo")，仅在 start_date 为空时生效
+        start_date, end_date : str
+            'YYYY-MM-DD' 或 'YYYYMMDD' 格式的起止日期。传空字符串时使用 period 推断。
 
         Returns:
             包含实时行情、历史K线（如果有）、行业信息的字典
@@ -432,14 +447,17 @@ class AStockDataCollector:
         # 收集实时数据
         info = self.get_stock_info(symbol)
 
-        # 收集历史数据
-        end_date = datetime.now().strftime("%Y%m%d")
-        if period == "1y":
-            start_date = "20250524"
-        elif period == "6mo":
-            start_date = "20241124"
-        else:
-            start_date = "20250524"
+        # 收集历史数据 (允许外部传入 start_date / end_date 用于回测等场景)
+        if not end_date:
+            end_date = datetime.now().strftime("%Y%m%d")
+        if not start_date:
+            # 根据 period 推断,默认 1y
+            if period == "1y":
+                start_date = "20250524"
+            elif period == "6mo":
+                start_date = "20241124"
+            else:
+                start_date = "20250524"
 
         historical_data = self.get_historical_data(symbol, "daily", start_date, end_date)
 
