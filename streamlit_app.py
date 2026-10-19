@@ -1133,11 +1133,10 @@ def main():
                 _fetch_err = str(ex)
 
         if not sector_flows:
-            st.warning("板块资金流向数据获取失败（网络或API问题），请稍后刷新重试")
+            st.error("⚠ 板块资金流向数据源全部不可用 (东财/新浪 板块接口)。请检查网络或稍后重试。")
         else:
-            is_demo = any(s.get('demo') for s in sector_flows)
-            if is_demo:
-                st.info("当前显示演示数据（API暂时不可用），实际数据部署到云端后自动恢复")
+            # 演示数据已被移除,这里不再有 is_demo 判断
+            pass
 
             # ── 汇总统计 ────────────────────────────────────────────────
             in_flows = [s for s in sector_flows if s['flow_yi'] > 0]

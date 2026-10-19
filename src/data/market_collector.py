@@ -605,33 +605,6 @@ def fetch_sector_flow_data() -> List[Dict]:
         results.sort(key=lambda x: x['flow_yi'], reverse=True)
         return results
 
-    # ── 方案3：演示数据（所有API都失败时） ─────────────────
-    def _demo_data():
-        import random
-        random.seed(42)
-        names = [
-            ('BK0428', '半导体', 4821.30, 2.14),
-            ('BK0430', '人工智能', 3845.60, 3.25),
-            ('BK0440', '新能源汽车', 2156.40, 1.87),
-            ('BK0441', '医药生物', 1932.10, -0.94),
-            ('BK0442', '光伏设备', 1543.80, -1.56),
-            ('BK0443', '消费电子', 1387.20, 1.23),
-            ('BK0444', '银行', 1256.40, 0.31),
-            ('BK0445', '证券', 987.60, -0.78),
-            ('BK0446', '白酒', 876.50, 0.52),
-            ('BK0447', '房地产', 654.30, -2.14),
-            ('BK0448', '煤炭开采', 543.20, -0.89),
-            ('BK0449', '黄金', 432.10, 1.67),
-            ('BK0450', '军工', 387.60, 2.45),
-            ('BK0451', '通信设备', 321.40, 1.92),
-            ('BK0452', '基础化工', 287.30, 0.74),
-        ]
-        flows = [random.uniform(-15, 32) for _ in names]
-        return [
-            {'name': n[1], 'code': n[0], 'price': n[2], 'change_pct': n[3], 'flow_yi': f, 'demo': True}
-            for (n, f) in zip(names, flows)
-        ]
-
     # 按优先级尝试
     for src_name, src_fn in [
         ('eastmoney', _try_eastmoney),
@@ -644,10 +617,11 @@ def fetch_sector_flow_data() -> List[Dict]:
                 return result
         except Exception as e:
             logger.debug(f"板块资金流向{src_name}失败: {e}")
+            continue
 
-    # 所有API都失败，返回演示数据
-    logger.debug("所有API失败，使用演示数据")
-    return _demo_data()
+    # 所有 API 失败,返回空列表 (UI 会显示警告,不再用 random 假装有数据)
+    logger.debug("板块资金流向所有源失败,返回 [] (UI 将显示警告)")
+    return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
