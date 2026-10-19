@@ -722,6 +722,7 @@ def fetch_top5_concentration() -> Dict:
             'top5_stocks': n_top,
             'top5_amount': top5_amount / 1e8,   # 转为亿元
             'total_amount': total_amount / 1e8,  # 转为亿元
+            'source': 'eastmoney',
         }
 
     # ── 方案2：akshare全市场股票列表+新浪批量实时行情─────────
@@ -797,55 +798,129 @@ def fetch_top5_concentration() -> Dict:
             'top5_stocks': n_top,
             'top5_amount': top5_amount / 1e8,   # 元→亿元
             'total_amount': total_amount / 1e8,  # 元→亿元
+            'source': 'sina_batch',
         }
 
-    # 按优先级尝试（本地网络阻断东财，只保留sina备用方案）
-    for src_name, src_fn in [
+    # ── 方案3：腾讯 qt.gtimg.cn 批量（fallback #3）───────────────
+    def _try_tencent_batch():
+        """用 akshare 拿全市场代码，再分批调腾讯 qt.gtimg.cn 拿成交额"""
+        try:
+            import akshare as ak
+            stock_list = ak.stock_info_a_code_name()
+            codes_raw = [str(c).zfill(6) for c in stock_list['code'].tolist()]
+        except Exception:
+            return None
+
+        # 补前缀：沪市 600/601/603/605/688 → sh，深市 → sz
+        codes = []
+        for c in codes_raw:
+            if c.startswith(('600', '601', '603', '605', '688')):
+                codes.append('sh' + c)
+            elif c.startswith(('000', '001', '002', '003', '300')):
+                codes.append('sz' + c)
+        if not codes:
+            return None
+
+        session = requests.Session()
+        headers = {
+            'Referer': 'https://stockapp.finance.qq.com/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        }
+        total_amount = 0.0
+        valid = []
+        batch_size = 50
+        # 最多拉 80 批 ≈ 4000 只，覆盖全市场 99% 成交额；超过不再拉（避免超时）
+        max_batches = 80
+        for i in range(0, min(len(codes), batch_size * max_batches), batch_size):
+            batch = codes[i:i+batch_size]
+            try:
+                r = session.get(
+                    f'https://qt.gtimg.cn/q={",".join(batch)}',
+                    headers=headers, timeout=8,
+                )
+                r.encoding = 'utf-8'
+                for line in r.text.strip().split('\n'):
+                    if '="";' in line or '=""' in line.split('=')[-1]:
+                        continue
+                    parts = line.split('"')
+                    if len(parts) < 2:
+                        continue
+                    fields = parts[1].split('~')
+                    if len(fields) < 38:
+                        continue
+                    try:
+                        # 腾讯字段：[6]=当前价，[37]=成交额（元），[38]=成交额（元，与37冗余）
+                        amount = float(fields[37]) if fields[37] else 0.0
+                        if amount > 0:
+                            valid.append({'amount': amount})
+                            total_amount += amount
+                    except Exception:
+                        continue
+            except Exception as ex:
+                logger.debug(f"Tencent batch {i//batch_size} failed: {ex}")
+                continue
+            _time.sleep(0.05)
+
+        if not valid or total_amount <= 0:
+            return None
+
+        valid.sort(key=lambda x: x['amount'], reverse=True)
+        n_top = max(1, int(len(valid) * 0.05))
+        top5_amount = sum(x['amount'] for x in valid[:n_top])
+        concentration = (top5_amount / total_amount) * 100
+
+        return {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'concentration': concentration,
+            'total_stocks': len(valid),
+            'top5_stocks': n_top,
+            'top5_amount': top5_amount / 1e8,
+            'total_amount': total_amount / 1e8,
+            'source': 'tencent_batch',
+        }
+
+    # ── 优先级链:东财(快) → 新浪(稳) → 腾讯(兜底) ──
+    # 各自独立 try,失败记录日志继续下一个;任一成功立即返回
+    candidates = [
+        ('eastmoney', _try_eastmoney_spot),
         ('akshare_sina', _try_akshare_sina),
-    ]:
+        ('tencent_batch', _try_tencent_batch),
+    ]
+    for src_name, src_fn in candidates:
         try:
             result = src_fn()
             if result and result.get('concentration', 0) > 0:
+                # 给没有 source 字段的补一个,方便 UI 区分
+                result.setdefault('source', src_name)
                 logger.debug(f"Top5%集中度获取成功: {src_name} → {result['concentration']:.2f}%")
                 return result
         except Exception as e:
             logger.debug(f"Top5%集中度{src_name}失败: {e}")
+            continue
 
+    logger.debug("Top5%集中度所有源失败,返回 None (UI 将降级展示)")
     return None
 
 
 def get_concentration_history(n_days: int = 90) -> List[Dict]:
     """
-    返回近N个交易日的集中度历史数据（本地缓存估算，若需真实历史需接入K线数据库）
-    若缓存不足n_days，返回已有数据
+    返回近N个交易日的集中度历史数据。
+    仅返回真实缓存(由 update_concentration_cache 累积);无缓存则返回 []。
+    注:历史数据需在 `update_concentration_cache` 被每日调用后才会累积。
     """
-    if not _concentration_history:
-        # 初始化一个演示历史（用于展示趋势形态）
-        import random
-        random.seed(42)
-        base = 38.0
-        history = []
-        today = datetime.now()
-        for i in range(n_days):
-            d = today - timedelta(days=i)
-            date_str = d.strftime('%Y-%m-%d')
-            # 加入一些波动，模拟真实市场节奏
-            noise = random.uniform(-3, 3)
-            trend = -0.05 * i  # 长期轻微下降趋势
-            val = base + noise + trend
-            val = max(25.0, min(55.0, val))
-            history.append({'date': date_str, 'concentration': round(val, 2)})
-        return list(reversed(history))
-
-    return _concentration_history[-n_days:]
+    return _concentration_history[-n_days:] if _concentration_history else []
 
 
 def update_concentration_cache():
-    """每日更新一次集中度数据到内存缓存，供UI展示"""
+    """每日更新一次集中度数据到内存缓存,供UI展示"""
     global _concentration_cache, _concentration_history
     today = datetime.now().strftime('%Y-%m-%d')
+    # 同一天不重复拉
+    if _concentration_cache.get('date') == today and _concentration_cache.get('latest'):
+        return _concentration_cache['latest']
     result = fetch_top5_concentration()
     if result:
+        _concentration_cache['date'] = today
         _concentration_cache['latest'] = result
         _concentration_history.append(result)
         if len(_concentration_history) > 365:
