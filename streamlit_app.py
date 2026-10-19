@@ -717,8 +717,12 @@ def main():
         def _load_concentration():
             from src.data.market_collector import (
                 fetch_top5_concentration, get_concentration_history,
+                update_concentration_cache,
             )
             today = fetch_top5_concentration()
+            # 写入持久化历史 (跨 session 累积)
+            if today:
+                update_concentration_cache()  # 会复用 today 避免重复拉
             history = get_concentration_history(120)
             return today, history
 

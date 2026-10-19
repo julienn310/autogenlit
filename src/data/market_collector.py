@@ -5,6 +5,8 @@
 import requests
 import logging
 import json
+import os
+from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -876,17 +878,81 @@ def fetch_top5_concentration() -> Dict:
     return None
 
 
+# ── 持久化历史缓存 (跨 session 累积) ──
+# 优先尝试 /mount/src/autogenlit/.cache (Streamlit Cloud writable 路径),
+# 否则用项目根 .cache,再否则用临时目录
+def _history_cache_path() -> Optional[str]:
+    """获取持久化缓存文件路径(根据运行环境选择可写位置)"""
+    import platform
+    is_linux = platform.system() == 'Linux'
+    candidates = []
+    # Streamlit Cloud 路径:只在 Linux 上尝试(Windows 上会假成功但不真写)
+    if is_linux:
+        candidates.append('/mount/src/autogenlit/.cache/concentration_history.json')
+    # 本机项目根 (跨平台)
+    candidates.append(str(Path(__file__).parent.parent.parent / '.cache' / 'concentration_history.json'))
+
+    for c in candidates:
+        try:
+            d = os.path.dirname(c)
+            os.makedirs(d, exist_ok=True)
+            test = os.path.join(d, '.write_test')
+            with open(test, 'w') as f:
+                f.write('1')
+            os.remove(test)
+            return c
+        except Exception:
+            continue
+    return None
+
+
+def _load_history_from_disk() -> List[Dict]:
+    """从磁盘读取历史缓存"""
+    path = _history_cache_path()
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _save_history_to_disk(history: List[Dict]):
+    """持久化历史缓存到磁盘"""
+    path = _history_cache_path()
+    if not path:
+        return
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.debug(f"持久化集中度历史失败: {e}")
+
+
+# 模块加载时即从磁盘恢复(如果有的话)
+if not _concentration_history:
+    _concentration_history = _load_history_from_disk()
+
+
 def get_concentration_history(n_days: int = 90) -> List[Dict]:
     """
     返回近N个交易日的集中度历史数据。
-    仅返回真实缓存(由 update_concentration_cache 累积);无缓存则返回 []。
-    注:历史数据需在 `update_concentration_cache` 被每日调用后才会累积。
+    从磁盘 JSON 缓存恢复(跨 session 累积);无缓存则返回 []。
     """
-    return _concentration_history[-n_days:] if _concentration_history else []
+    # 优先用内存,空的话从磁盘读
+    hist = _concentration_history if _concentration_history else _load_history_from_disk()
+    if hist and not _concentration_history:
+        # 同步到内存
+        _concentration_history.extend(hist)
+    return hist[-n_days:] if hist else []
 
 
 def update_concentration_cache():
-    """每日更新一次集中度数据到内存缓存,供UI展示"""
+    """每日更新一次集中度数据,持久化到磁盘供后续 session 使用"""
     global _concentration_cache, _concentration_history
     today = datetime.now().strftime('%Y-%m-%d')
     # 同一天不重复拉
@@ -896,8 +962,14 @@ def update_concentration_cache():
     if result:
         _concentration_cache['date'] = today
         _concentration_cache['latest'] = result
+        # 去重:如果今天已有,替换
+        _concentration_history = [
+            h for h in _concentration_history if h.get('date') != today
+        ]
         _concentration_history.append(result)
         if len(_concentration_history) > 365:
             _concentration_history = _concentration_history[-365:]
+        # 持久化
+        _save_history_to_disk(_concentration_history)
         return result
     return None
