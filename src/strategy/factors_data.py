@@ -1,22 +1,23 @@
 """
-因子库聚合器 — 把 4 个因子模块合并成扁平 list,支持搜索与分类过滤
+因子库聚合器 — 把 5 个因子模块合并成扁平 list,支持搜索与分类过滤
 """
 from __future__ import annotations
 from typing import List, Dict, Optional
 
-from .factors import alpha_101, gtja_191, qlib_158, academic
+from .factors import alpha_101, gtja_191, qlib_158, academic, financial_quality
 
 
 CATEGORIES = {
-    'alpha_101': ('Alpha 101', alpha_101.FACTORS),
-    'gtja_191':  ('国泰 191',  gtja_191.FACTORS),
-    'qlib_158':  ('Qlib 158',  qlib_158.FACTORS),
-    'academic':  ('学术因子',  academic.FACTORS),
+    'alpha_101':       ('Alpha 101',     alpha_101.FACTORS),
+    'gtja_191':        ('国泰 191',      gtja_191.FACTORS),
+    'qlib_158':        ('Qlib 158',      qlib_158.FACTORS),
+    'academic':        ('学术因子',      academic.FACTORS),
+    'financial_quality': ('财务质量面',   financial_quality.FACTORS),
 }
 
 
 def get_all_factors() -> List[Dict]:
-    """返回所有 52 个因子,每条带 _cat/_cat_label 字段"""
+    """返回所有 74 个因子,每条带 _cat/_cat_label 字段"""
     out = []
     for cat_key, (label, factors) in CATEGORIES.items():
         for f in factors:

@@ -14,7 +14,7 @@ import uuid
 from typing import Dict, List
 
 from src.data.astock_collector import AStockDataCollector
-from src.strategy.data_adapter import build_engine_input
+from src.strategy.data_adapter import build_engine_input, fetch_benchmark_ohlcv, build_benchmark_curve
 from src.strategy.lite_engine import BacktestConfig, run_backtest
 from src.strategy.strategy_templates import (
     TEMPLATES, get_template, list_template_names,
@@ -282,6 +282,21 @@ def _execute_backtest(
         st.error(f"回测失败: {result.error}")
         return
 
+    # 4.5) 拉基准指数(上证)用于对比 — 失败时降级,不影响主流程
+    benchmark_curve_df = None
+    try:
+        bench_ohlcv = fetch_benchmark_ohlcv(
+            symbol='sh000001', start=start, end=end,
+        )
+        if bench_ohlcv is not None and not bench_ohlcv.empty:
+            equity_dates = [e.date for e in result.equity_curve]
+            benchmark_curve_df = build_benchmark_curve(
+                bench_ohlcv, initial_cash, equity_dates,
+            )
+    except Exception as _e:
+        # 静默降级:不画基准线即可
+        benchmark_curve_df = None
+
     # 5) 落盘到 session
     run_record = {
         'meta': {
@@ -296,6 +311,7 @@ def _execute_backtest(
             'run_at': datetime.now(),
         },
         'result': result,
+        'benchmark_df': benchmark_curve_df,  # None 表示未拉到基准
     }
     # 注入唯一 run_id 供前端组件 key 使用
     run_record['run_id'] = uuid.uuid4().hex
@@ -361,6 +377,26 @@ def _render_single_result(run_record: Dict, position: str = ""):
             </div>
             """, unsafe_allow_html=True)
 
+    # 基准对比信息条(若有)
+    benchmark_df = run_record.get('benchmark_df')
+    if benchmark_df is not None and not benchmark_df.empty:
+        bench_final = float(benchmark_df['benchmark_equity'].iloc[-1])
+        bench_return = (bench_final - meta['initial_cash']) / meta['initial_cash']
+        alpha = m.total_return - bench_return
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#fff7ed,#fef3c7);
+                    border:1px solid #fbbf24;border-radius:8px;
+                    padding:10px 16px;margin:8px 0;display:flex;gap:32px;
+                    font-size:0.85rem;color:#475569;">
+            <span><b>上证指数同期</b> {bench_return:+.2%} (¥{bench_final:,.0f})</span>
+            <span><b>超额收益 α</b>
+                <span style="color:{'#16a34a' if alpha>=0 else '#dc2626'};font-weight:700;">
+                    {alpha:+.2%}
+                </span>
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+
     # 净值曲线 + 回撤
     if result.equity_curve:
         eq_df = pd.DataFrame([
@@ -368,7 +404,7 @@ def _render_single_result(run_record: Dict, position: str = ""):
             for e in result.equity_curve
         ])
         st.plotly_chart(
-            plot_equity_with_drawdown(eq_df),
+            plot_equity_with_drawdown(eq_df, benchmark_df=benchmark_df),
             use_container_width=True,
             key=f"equity_{run_record.get('run_id', id(run_record))}_{position}",
         )
