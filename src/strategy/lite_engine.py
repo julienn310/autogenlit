@@ -208,7 +208,8 @@ def run_backtest(
                         pnl_pct=pnl_pct,
                         exit_reason=exit_reason,
                     ))
-                    cash += pnl
+                    # Long 平仓:把卖出款全额收回(开仓时已扣 shares*entry,这里只加 shares*current)
+                    cash += position.shares * current_price
                     position = None
                     n_shares = 0
 
@@ -237,7 +238,8 @@ def run_backtest(
                         pnl_pct=pnl_pct,
                         exit_reason=exit_reason,
                     ))
-                    cash += pnl
+                    # Short 平仓:付出买回款(开仓时已收 shares*entry,这里减 shares*current)
+                    cash -= position.shares * current_price
                     position = None
                     n_shares = 0
 
@@ -272,12 +274,15 @@ def run_backtest(
                     tp_price = current_price * (1 - config.take_profit_pct)
 
         # ── Calculate equity ───────────────────────────────────────────────
+        # 公式:total_equity = cash + market_value_of_position
+        #   Long 持仓市值 = shares * current_price  (现金部分 shares*entry 已扣,这里回加市值)
+        #   Short 持仓市值 = -(shares * current_price) (现金部分 shares*entry 已收,这里扣减买回成本)
+        # 注意:不能写 cash + unrealized_pnl,否则成本会被扣两次 → 净值跌穿 -100%
         if position is not None:
             if position.direction == 1:
-                unrealized = (current_price - position.entry_price) * position.shares
-            else:
-                unrealized = (position.entry_price - current_price) * position.shares
-            total_equity = cash + unrealized
+                total_equity = cash + position.shares * current_price
+            else:  # short
+                total_equity = cash - position.shares * current_price
         else:
             total_equity = cash
 
@@ -319,7 +324,11 @@ def run_backtest(
             pnl_pct=pnl_pct,
             exit_reason="end",
         ))
-        cash += pnl
+        # 期末强平:按方向回补现金(开仓时已扣/收 shares*entry,这里只补 shares*last)
+        if position.direction == 1:
+            cash += position.shares * last_price
+        else:
+            cash -= position.shares * last_price
 
     # ── Calculate metrics ────────────────────────────────────────────────────
     metrics = calc_metrics(

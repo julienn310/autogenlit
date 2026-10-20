@@ -5,6 +5,8 @@
 import requests
 import logging
 import json
+import os
+from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -605,33 +607,6 @@ def fetch_sector_flow_data() -> List[Dict]:
         results.sort(key=lambda x: x['flow_yi'], reverse=True)
         return results
 
-    # ── 方案3：演示数据（所有API都失败时） ─────────────────
-    def _demo_data():
-        import random
-        random.seed(42)
-        names = [
-            ('BK0428', '半导体', 4821.30, 2.14),
-            ('BK0430', '人工智能', 3845.60, 3.25),
-            ('BK0440', '新能源汽车', 2156.40, 1.87),
-            ('BK0441', '医药生物', 1932.10, -0.94),
-            ('BK0442', '光伏设备', 1543.80, -1.56),
-            ('BK0443', '消费电子', 1387.20, 1.23),
-            ('BK0444', '银行', 1256.40, 0.31),
-            ('BK0445', '证券', 987.60, -0.78),
-            ('BK0446', '白酒', 876.50, 0.52),
-            ('BK0447', '房地产', 654.30, -2.14),
-            ('BK0448', '煤炭开采', 543.20, -0.89),
-            ('BK0449', '黄金', 432.10, 1.67),
-            ('BK0450', '军工', 387.60, 2.45),
-            ('BK0451', '通信设备', 321.40, 1.92),
-            ('BK0452', '基础化工', 287.30, 0.74),
-        ]
-        flows = [random.uniform(-15, 32) for _ in names]
-        return [
-            {'name': n[1], 'code': n[0], 'price': n[2], 'change_pct': n[3], 'flow_yi': f, 'demo': True}
-            for (n, f) in zip(names, flows)
-        ]
-
     # 按优先级尝试
     for src_name, src_fn in [
         ('eastmoney', _try_eastmoney),
@@ -644,10 +619,11 @@ def fetch_sector_flow_data() -> List[Dict]:
                 return result
         except Exception as e:
             logger.debug(f"板块资金流向{src_name}失败: {e}")
+            continue
 
-    # 所有API都失败，返回演示数据
-    logger.debug("所有API失败，使用演示数据")
-    return _demo_data()
+    # 所有 API 失败,返回空列表 (UI 会显示警告,不再用 random 假装有数据)
+    logger.debug("板块资金流向所有源失败,返回 [] (UI 将显示警告)")
+    return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -722,6 +698,7 @@ def fetch_top5_concentration() -> Dict:
             'top5_stocks': n_top,
             'top5_amount': top5_amount / 1e8,   # 转为亿元
             'total_amount': total_amount / 1e8,  # 转为亿元
+            'source': 'eastmoney',
         }
 
     # ── 方案2：akshare全市场股票列表+新浪批量实时行情─────────
@@ -797,58 +774,202 @@ def fetch_top5_concentration() -> Dict:
             'top5_stocks': n_top,
             'top5_amount': top5_amount / 1e8,   # 元→亿元
             'total_amount': total_amount / 1e8,  # 元→亿元
+            'source': 'sina_batch',
         }
 
-    # 按优先级尝试（本地网络阻断东财，只保留sina备用方案）
-    for src_name, src_fn in [
+    # ── 方案3：腾讯 qt.gtimg.cn 批量（fallback #3）───────────────
+    def _try_tencent_batch():
+        """用 akshare 拿全市场代码，再分批调腾讯 qt.gtimg.cn 拿成交额"""
+        try:
+            import akshare as ak
+            stock_list = ak.stock_info_a_code_name()
+            codes_raw = [str(c).zfill(6) for c in stock_list['code'].tolist()]
+        except Exception:
+            return None
+
+        # 补前缀：沪市 600/601/603/605/688 → sh，深市 → sz
+        codes = []
+        for c in codes_raw:
+            if c.startswith(('600', '601', '603', '605', '688')):
+                codes.append('sh' + c)
+            elif c.startswith(('000', '001', '002', '003', '300')):
+                codes.append('sz' + c)
+        if not codes:
+            return None
+
+        session = requests.Session()
+        headers = {
+            'Referer': 'https://stockapp.finance.qq.com/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        }
+        total_amount = 0.0
+        valid = []
+        batch_size = 50
+        # 最多拉 80 批 ≈ 4000 只，覆盖全市场 99% 成交额；超过不再拉（避免超时）
+        max_batches = 80
+        for i in range(0, min(len(codes), batch_size * max_batches), batch_size):
+            batch = codes[i:i+batch_size]
+            try:
+                r = session.get(
+                    f'https://qt.gtimg.cn/q={",".join(batch)}',
+                    headers=headers, timeout=8,
+                )
+                r.encoding = 'utf-8'
+                for line in r.text.strip().split('\n'):
+                    if '="";' in line or '=""' in line.split('=')[-1]:
+                        continue
+                    parts = line.split('"')
+                    if len(parts) < 2:
+                        continue
+                    fields = parts[1].split('~')
+                    if len(fields) < 38:
+                        continue
+                    try:
+                        # 腾讯字段：[6]=当前价，[37]=成交额（元），[38]=成交额（元，与37冗余）
+                        amount = float(fields[37]) if fields[37] else 0.0
+                        if amount > 0:
+                            valid.append({'amount': amount})
+                            total_amount += amount
+                    except Exception:
+                        continue
+            except Exception as ex:
+                logger.debug(f"Tencent batch {i//batch_size} failed: {ex}")
+                continue
+            _time.sleep(0.05)
+
+        if not valid or total_amount <= 0:
+            return None
+
+        valid.sort(key=lambda x: x['amount'], reverse=True)
+        n_top = max(1, int(len(valid) * 0.05))
+        top5_amount = sum(x['amount'] for x in valid[:n_top])
+        concentration = (top5_amount / total_amount) * 100
+
+        return {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'concentration': concentration,
+            'total_stocks': len(valid),
+            'top5_stocks': n_top,
+            'top5_amount': top5_amount / 1e8,
+            'total_amount': total_amount / 1e8,
+            'source': 'tencent_batch',
+        }
+
+    # ── 优先级链:东财(快) → 新浪(稳) → 腾讯(兜底) ──
+    # 各自独立 try,失败记录日志继续下一个;任一成功立即返回
+    candidates = [
+        ('eastmoney', _try_eastmoney_spot),
         ('akshare_sina', _try_akshare_sina),
-    ]:
+        ('tencent_batch', _try_tencent_batch),
+    ]
+    for src_name, src_fn in candidates:
         try:
             result = src_fn()
             if result and result.get('concentration', 0) > 0:
+                # 给没有 source 字段的补一个,方便 UI 区分
+                result.setdefault('source', src_name)
                 logger.debug(f"Top5%集中度获取成功: {src_name} → {result['concentration']:.2f}%")
                 return result
         except Exception as e:
             logger.debug(f"Top5%集中度{src_name}失败: {e}")
+            continue
 
+    logger.debug("Top5%集中度所有源失败,返回 None (UI 将降级展示)")
     return None
+
+
+# ── 持久化历史缓存 (跨 session 累积) ──
+# 优先尝试 /mount/src/autogenlit/.cache (Streamlit Cloud writable 路径),
+# 否则用项目根 .cache,再否则用临时目录
+def _history_cache_path() -> Optional[str]:
+    """获取持久化缓存文件路径(根据运行环境选择可写位置)"""
+    import platform
+    is_linux = platform.system() == 'Linux'
+    candidates = []
+    # Streamlit Cloud 路径:只在 Linux 上尝试(Windows 上会假成功但不真写)
+    if is_linux:
+        candidates.append('/mount/src/autogenlit/.cache/concentration_history.json')
+    # 本机项目根 (跨平台)
+    candidates.append(str(Path(__file__).parent.parent.parent / '.cache' / 'concentration_history.json'))
+
+    for c in candidates:
+        try:
+            d = os.path.dirname(c)
+            os.makedirs(d, exist_ok=True)
+            test = os.path.join(d, '.write_test')
+            with open(test, 'w') as f:
+                f.write('1')
+            os.remove(test)
+            return c
+        except Exception:
+            continue
+    return None
+
+
+def _load_history_from_disk() -> List[Dict]:
+    """从磁盘读取历史缓存"""
+    path = _history_cache_path()
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _save_history_to_disk(history: List[Dict]):
+    """持久化历史缓存到磁盘"""
+    path = _history_cache_path()
+    if not path:
+        return
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.debug(f"持久化集中度历史失败: {e}")
+
+
+# 模块加载时即从磁盘恢复(如果有的话)
+if not _concentration_history:
+    _concentration_history = _load_history_from_disk()
 
 
 def get_concentration_history(n_days: int = 90) -> List[Dict]:
     """
-    返回近N个交易日的集中度历史数据（本地缓存估算，若需真实历史需接入K线数据库）
-    若缓存不足n_days，返回已有数据
+    返回近N个交易日的集中度历史数据。
+    从磁盘 JSON 缓存恢复(跨 session 累积);无缓存则返回 []。
     """
-    if not _concentration_history:
-        # 初始化一个演示历史（用于展示趋势形态）
-        import random
-        random.seed(42)
-        base = 38.0
-        history = []
-        today = datetime.now()
-        for i in range(n_days):
-            d = today - timedelta(days=i)
-            date_str = d.strftime('%Y-%m-%d')
-            # 加入一些波动，模拟真实市场节奏
-            noise = random.uniform(-3, 3)
-            trend = -0.05 * i  # 长期轻微下降趋势
-            val = base + noise + trend
-            val = max(25.0, min(55.0, val))
-            history.append({'date': date_str, 'concentration': round(val, 2)})
-        return list(reversed(history))
-
-    return _concentration_history[-n_days:]
+    # 优先用内存,空的话从磁盘读
+    hist = _concentration_history if _concentration_history else _load_history_from_disk()
+    if hist and not _concentration_history:
+        # 同步到内存
+        _concentration_history.extend(hist)
+    return hist[-n_days:] if hist else []
 
 
 def update_concentration_cache():
-    """每日更新一次集中度数据到内存缓存，供UI展示"""
+    """每日更新一次集中度数据,持久化到磁盘供后续 session 使用"""
     global _concentration_cache, _concentration_history
     today = datetime.now().strftime('%Y-%m-%d')
+    # 同一天不重复拉
+    if _concentration_cache.get('date') == today and _concentration_cache.get('latest'):
+        return _concentration_cache['latest']
     result = fetch_top5_concentration()
     if result:
+        _concentration_cache['date'] = today
         _concentration_cache['latest'] = result
+        # 去重:如果今天已有,替换
+        _concentration_history = [
+            h for h in _concentration_history if h.get('date') != today
+        ]
         _concentration_history.append(result)
         if len(_concentration_history) > 365:
             _concentration_history = _concentration_history[-365:]
+        # 持久化
+        _save_history_to_disk(_concentration_history)
         return result
     return None

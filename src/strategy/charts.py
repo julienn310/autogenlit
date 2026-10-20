@@ -3,27 +3,43 @@
 配色延续 a_stock_research: #0d3b66 (主), #c14545 (回撤)
 """
 from __future__ import annotations
+from typing import Optional
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def plot_equity_with_drawdown(eq_df: pd.DataFrame) -> go.Figure:
+def plot_equity_with_drawdown(
+    eq_df: pd.DataFrame,
+    benchmark_df: Optional[pd.DataFrame] = None,
+    benchmark_label: str = '上证指数',
+) -> go.Figure:
     """
     两行子图: 70% 净值面积 + 30% 回撤面积
+    如果提供 benchmark_df,会在 row=1 叠加一条虚线作为对比基准。
 
     Parameters
     ----------
     eq_df : pd.DataFrame
         必含列: date (str/date), equity (float), drawdown (float 0..1)
+    benchmark_df : pd.DataFrame, optional
+        列: date (str), benchmark_equity (float)
+    benchmark_label : str
+        图例上的基准名(默认 "上证指数")
     """
     if eq_df.empty:
         return go.Figure()
 
+    has_benchmark = (
+        benchmark_df is not None
+        and not benchmark_df.empty
+        and 'benchmark_equity' in benchmark_df.columns
+    )
+
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
         row_heights=[0.7, 0.3],
-        subplot_titles=("净值曲线", "回撤 (%)"),
+        subplot_titles=("净值曲线 vs 基准", "回撤 (%)"),
         vertical_spacing=0.08,
     )
 
@@ -33,19 +49,33 @@ def plot_equity_with_drawdown(eq_df: pd.DataFrame) -> go.Figure:
             x=eq_df['date'],
             y=eq_df['equity'],
             fill='tozeroy',
-            name='净值',
+            name='策略净值',
             line=dict(color='#0d3b66', width=2),
             fillcolor='rgba(13, 59, 102, 0.08)',
-            hovertemplate='%{x}<br>净值 ¥%{y:,.0f}<extra></extra>',
+            hovertemplate='%{x}<br>策略 ¥%{y:,.0f}<extra></extra>',
         ),
         row=1, col=1,
     )
+
+    # 叠加基准线(虚线 + 浅橙)
+    if has_benchmark:
+        fig.add_trace(
+            go.Scatter(
+                x=benchmark_df['date'],
+                y=benchmark_df['benchmark_equity'],
+                mode='lines',
+                name=benchmark_label,
+                line=dict(color='#f59e0b', width=1.6, dash='dash'),
+                hovertemplate='%{x}<br>' + benchmark_label + ' ¥%{y:,.0f}<extra></extra>',
+            ),
+            row=1, col=1,
+        )
 
     # 初始资金参考线
     if 'equity' in eq_df.columns and len(eq_df) > 0:
         initial = float(eq_df['equity'].iloc[0]) if not eq_df.empty else 100000
         fig.add_hline(
-            y=initial, line_dash='dash', line_color='#94a3b8', line_width=1,
+            y=initial, line_dash='dot', line_color='#94a3b8', line_width=1,
             annotation_text=f'初始 ¥{initial:,.0f}',
             annotation_font_size=10, annotation_font_color='#64748b',
             row=1, col=1,
@@ -68,7 +98,8 @@ def plot_equity_with_drawdown(eq_df: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         template='plotly_white',
         height=460,
-        showlegend=False,
+        showlegend=has_benchmark,
+        legend=dict(orientation='h', y=1.06, x=0, font=dict(size=11)),
         margin=dict(l=10, r=10, t=40, b=10),
         hovermode='x unified',
         paper_bgcolor='rgba(0,0,0,0)',
