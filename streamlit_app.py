@@ -715,58 +715,89 @@ def main():
         # ========== 市场成交额集中度（Top5% 警示）============
         @st.cache_data(ttl=3600, show_spinner=False)
         def _load_concentration():
-            from src.data.market_collector import fetch_top5_concentration, get_concentration_history
+            from src.data.market_collector import (
+                fetch_top5_concentration, get_concentration_history,
+                update_concentration_cache,
+            )
             today = fetch_top5_concentration()
+            # 写入持久化历史 (跨 session 累积)
+            if today:
+                update_concentration_cache()  # 会复用 today 避免重复拉
             history = get_concentration_history(120)
             return today, history
 
-        with st.spinner("加载市场结构指标（首次需约50秒）..."):
+        with st.spinner("加载市场结构指标（首次需约 10 秒）..."):
             try:
                 conc_today, conc_history = _load_concentration()
             except Exception:
                 conc_today, conc_history = None, []
 
-        # 若当日数据获取失败（API不可用），用历史模拟数据补充
-        if not conc_today and conc_history:
-            conc_today = conc_history[-1]
+        # 三态判定
+        #   live  : 今日真实数据 (has_detail=True) + 至少一条历史
+        #   stale : 今日失败,但有历史缓存可用 (banner 用 last_known,黄底警告)
+        #   failed: 今日失败 + 无历史缓存 (banner 显式提示 + 重试按钮)
+        has_detail = conc_today and all(
+            k in conc_today for k in ('total_stocks', 'top5_stocks', 'top5_amount', 'total_amount')
+        )
+        if has_detail:
+            data_status = 'live'
+        elif conc_history:
+            data_status = 'stale'
+            last_known = conc_history[-1]
+        else:
+            data_status = 'failed'
 
         def _render_conc_banner(conc_val):
             """根据集中度数值返回不同颜色风格的HTML banner"""
             if conc_val >= 48:
-                color = '#d03b3b'
-                label = '极度泡沫化'
-                bg = '#fff5f5'
-                border = '#d03b3b'
+                color, label, bg, border = '#d03b3b', '极度泡沫化', '#fff5f5', '#d03b3b'
             elif conc_val >= 45:
-                color = '#ec835a'
-                label = '高热区'
-                bg = '#fff8f5'
-                border = '#ec835a'
+                color, label, bg, border = '#ec835a', '高热区',     '#fff8f5', '#ec835a'
             elif conc_val >= 38:
-                color = '#2a78d6'
-                label = '正常区间'
-                bg = '#f0f5ff'
-                border = '#2a78d6'
+                color, label, bg, border = '#2a78d6', '正常区间',   '#f0f5ff', '#2a78d6'
             else:
-                color = '#0ca30c'
-                label = '分散偏低'
-                bg = '#f0fff0'
-                border = '#0ca30c'
+                color, label, bg, border = '#0ca30c', '分散偏低',   '#f0fff0', '#0ca30c'
             return color, label, bg, border
 
-        if conc_today:
-            c = conc_today
+        # ── Banner ──
+        if data_status in ('live', 'stale'):
+            c = conc_today if data_status == 'live' else last_known
             val = c['concentration']
             color, label, bg, border = _render_conc_banner(val)
 
-            # 详细信息（仅当日真实数据有，演示历史数据没有）
-            has_detail = all(k in c for k in ('total_stocks', 'top5_stocks', 'top5_amount', 'total_amount'))
-            detail_html = (
-                f"当日全市场 {c['total_stocks']} 只股票中，前 {c['top5_stocks']} 只（Top 5%）"
-                f"贡献成交额 <strong>{c['top5_amount']:.0f}亿</strong> / 总成交额 <strong>{c['total_amount']:.0f}亿</strong>"
-                if has_detail else
-                f"<strong>演示数据</strong> — 云端部署后显示真实全市场统计"
-            )
+            if data_status == 'live':
+                # 真实今日数据
+                source_name = {'eastmoney': '东财', 'sina_batch': '新浪', 'tencent_batch': '腾讯'}.get(
+                    c.get('source', ''), c.get('source', ''))
+                detail_html = (
+                    f"当日全市场 <b>{c['total_stocks']}</b> 只股票中，前 <b>{c['top5_stocks']}</b> 只（Top 5%）"
+                    f"贡献成交额 <b>{c['top5_amount']:.0f}亿</b> / 总成交额 <b>{c['total_amount']:.0f}亿</b>"
+                    f" &nbsp;·&nbsp; 数据源: {source_name}"
+                )
+            else:
+                # stale: 今日失败,显示 last_known (黄底警告)
+                color, label, bg, border = '#d97706', '⚠ 数据源异常', '#fffbeb', '#d97706'
+                date_str = c.get('date', '—')
+                detail_html = (
+                    f"今日 API 全部不可达,显示 <b>上次成功 {date_str}</b> 的缓存值。"
+                    f"原值: Top {c.get('top5_stocks', '?')} / {c.get('total_stocks', '?')} 只,"
+                    f"贡献 {c.get('top5_amount', 0):.0f}亿 / 总 {c.get('total_amount', 0):.0f}亿"
+                )
+
+            # 历史均值
+            if len(conc_history) >= 5:
+                mean_html = (
+                    f"<div style=\"font-size:1.2rem;font-weight:700;color:#52514e;\">"
+                    f"{sum(h['concentration'] for h in conc_history)/len(conc_history):.1f}%</div>"
+                    f"<div style=\"font-size:0.72rem;color:#888;margin-top:2px;\">"
+                    f"近 {len(conc_history)} 个交易日</div>"
+                )
+            else:
+                mean_html = (
+                    f"<div style=\"font-size:1.2rem;font-weight:700;color:#cbd5e1;\">—</div>"
+                    f"<div style=\"font-size:0.72rem;color:#888;margin-top:2px;\">"
+                    f"历史 {len(conc_history)} 天 (≥5 天后显示均值)</div>"
+                )
 
             st.markdown(f"""
             <div style="background:{bg};border-left:5px solid {border};border-radius:10px;
@@ -786,143 +817,149 @@ def main():
                     </div>
                     <div style="text-align:right;min-width:160px;">
                         <div style="font-size:0.75rem;color:#888;">历史均值</div>
-                        <div style="font-size:1.2rem;font-weight:700;color:#52514e;">
-                            {sum(h['concentration'] for h in conc_history)/max(len(conc_history),1):.1f}%
-                        </div>
-                        <div style="font-size:0.72rem;color:#888;margin-top:2px;">
-                            近 {len(conc_history)} 个交易日
-                        </div>
+                        {mean_html}
                     </div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-            # 历史走势图：集中度（上） + 上证指数（下）共享X轴
-            if len(conc_history) >= 2:
-                import plotly.graph_objects as go
-                from plotly.subplots import make_subplots
+            # 重试按钮 (只在 stale / failed 状态显示) — 放在 banner 下方
+            if data_status == 'stale':
+                if st.button("🔄 重试拉取今日数据", key="conc_retry_stale", help="清缓存重新调 fallback 链"):
+                    _load_concentration.clear()
+                    st.rerun()
 
-                df_hist = pd.DataFrame(conc_history)
-                dates = df_hist['date'].tolist()
+        else:  # failed
+            st.markdown("""
+            <div style="background:#fef2f2;border-left:5px solid #dc2626;border-radius:10px;
+                        padding:16px 20px;margin:10px 0 14px 0;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                    <div>
+                        <div style="font-size:0.8rem;color:#888;margin-bottom:4px;">
+                            全市场成交额集中度指标 · Top 5% 个股成交额占比
+                        </div>
+                        <div style="display:flex;align-items:baseline;gap:10px;">
+                            <span style="font-size:2.8rem;font-weight:900;color:#dc2626;">--<span style="font-size:1.2rem;">%</span></span>
+                            <span style="font-size:0.9rem;color:#dc2626;font-weight:600;">⚠ 数据源异常</span>
+                        </div>
+                        <div style="font-size:0.78rem;color:#888;margin-top:4px;">
+                            所有数据源 (东财 / 新浪 / 腾讯) 均不可达,且无历史缓存。
+                            <br/>建议: 检查网络 / 关闭 VPN / 点击右下方「重试」。
+                        </div>
+                    </div>
+                    <div style="text-align:right;min-width:160px;">
+                        <div style="font-size:0.75rem;color:#888;">历史均值</div>
+                        <div style="font-size:1.2rem;font-weight:700;color:#cbd5e1;">—</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("🔄 重试拉取数据", key="conc_retry_failed", type="primary"):
+                _load_concentration.clear()
+                st.rerun()
 
-                # 拉取上证指数近120日数据，与集中度日期对齐
-                @st.cache_data(ttl=3600, show_spinner=False)
-                def _load_sh_index(d_start):
-                    try:
-                        from src.data.market_collector import fetch_major_indices_history
-                        hist = fetch_major_indices_history('sh000001', d_start)
-                        # 标准化为 {date, value}
-                        rows = []
-                        for d, vals in hist.items():
-                            rows.append({'date': d, 'close': float(vals[-1]) if vals else 0})
-                        rows.sort(key=lambda x: x['date'])
-                        return rows
-                    except Exception:
-                        return []
+        # ── 历史走势图 (live + stale 都画; 只有 conc_history>=10 才显示走势) ──
+        if data_status in ('live', 'stale') and len(conc_history) >= 10:
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
 
-                d_start = conc_history[0]['date'] if conc_history else None
-                sh_history = _load_sh_index(d_start)
+            df_hist = pd.DataFrame(conc_history)
+            dates = df_hist['date'].tolist()
 
-                # 把上证指数对齐到集中度日期（用前值填充缺失日）
-                if sh_history:
-                    sh_by_date = {r['date']: r['close'] for r in sh_history}
-                    sh_aligned = []
-                    last_val = None
-                    for d in dates:
-                        if d in sh_by_date:
-                            last_val = sh_by_date[d]
-                        sh_aligned.append(last_val if last_val else None)
-                    # 简单归一化：当日值 / 区间首日值 × 100
-                    base = next((v for v in sh_aligned if v), 100)
-                    sh_indexed = [(v / base * 100) if v else None for v in sh_aligned]
-                else:
-                    sh_indexed = [None] * len(dates)
+            # 拉取上证指数,与集中度日期对齐
+            @st.cache_data(ttl=3600, show_spinner=False)
+            def _load_sh_index(d_start):
+                try:
+                    from src.data.market_collector import fetch_major_indices_history
+                    hist = fetch_major_indices_history('sh000001', d_start)
+                    rows = []
+                    for d, vals in hist.items():
+                        rows.append({'date': d, 'close': float(vals[-1]) if vals else 0})
+                    rows.sort(key=lambda x: x['date'])
+                    return rows
+                except Exception:
+                    return []
 
-                # 创建上下双子图，共享X轴
-                fig = make_subplots(
-                    rows=2, cols=1,
-                    shared_xaxes=True,
-                    row_heights=[0.55, 0.45],
-                    vertical_spacing=0.08,
-                )
+            d_start = conc_history[0]['date']
+            sh_history = _load_sh_index(d_start)
 
-                # ── 上：集中度 ──
-                fig.add_trace(go.Scatter(
-                    x=dates,
-                    y=df_hist['concentration'],
-                    mode='lines+markers',
-                    name='集中度',
-                    line=dict(color='#667eea', width=2),
-                    marker=dict(size=4, color='#667eea'),
-                    fill='tozeroy',
-                    fillcolor='rgba(102,126,234,0.10)',
-                    hovertemplate='%{x}<br>集中度: %{y:.1f}%<extra></extra>',
-                ), row=1, col=1)
-                fig.add_hrect(y0=45, y1=60, fillcolor='#ec835a', opacity=0.12,
-                              line_width=0, row=1, col=1)
-                fig.add_hline(y=38, line_dash='dash', line_color='#aaa', line_width=1,
-                              annotation_text='38%下限', annotation_font_size=8, annotation_font_color='#888',
-                              row=1, col=1)
+            if sh_history:
+                sh_by_date = {r['date']: r['close'] for r in sh_history}
+                sh_aligned = []
+                last_val = None
+                for d in dates:
+                    if d in sh_by_date:
+                        last_val = sh_by_date[d]
+                    sh_aligned.append(last_val if last_val else None)
+                base = next((v for v in sh_aligned if v), 100)
+                sh_indexed = [(v / base * 100) if v else None for v in sh_aligned]
+            else:
+                sh_indexed = [None] * len(dates)
 
-                # ── 下：上证指数（归一化）──
-                fig.add_trace(go.Scatter(
-                    x=dates,
-                    y=sh_indexed,
-                    mode='lines',
-                    name='上证指数(归一化)',
-                    line=dict(color='#c00', width=1.6),
-                    fill='tozeroy',
-                    fillcolor='rgba(204,0,0,0.05)',
-                    connectgaps=True,
-                    hovertemplate='%{x}<br>上证: %{y:.2f}<extra></extra>',
-                ), row=2, col=1)
+            fig = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                row_heights=[0.55, 0.45], vertical_spacing=0.08,
+            )
 
-                fig.update_layout(
-                    height=360,
-                    margin=dict(l=6, r=6, t=20, b=10),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    font=dict(size=9),
-                    showlegend=True,
-                    legend=dict(orientation='h', y=1.06, x=0, font=dict(size=9)),
-                    hovermode='x unified',
-                )
-                # 集中度子图Y轴
-                fig.update_yaxes(
-                    title_text=None, showgrid=True, gridcolor='#f0f0f0',
-                    zeroline=False, range=[20, 60], fixedrange=True,
-                    row=1, col=1,
-                )
-                # 指数子图Y轴
-                fig.update_yaxes(
-                    title_text=None, showgrid=True, gridcolor='#f0f0f0',
-                    zeroline=False, fixedrange=True,
-                    tickformat='.1f',
-                    row=2, col=1,
-                )
-                # X轴：只在底部显示
-                fig.update_xaxes(
-                    showgrid=False, zeroline=False, fixedrange=True,
-                    tickangle=-30, tickfont=dict(size=8), nticks=8,
-                    row=1, col=1,
-                )
-                fig.update_xaxes(
-                    showgrid=False, zeroline=False, fixedrange=True,
-                    tickangle=-30, tickfont=dict(size=8), nticks=8,
-                    row=2, col=1,
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            # 上：集中度
+            fig.add_trace(go.Scatter(
+                x=dates, y=df_hist['concentration'],
+                mode='lines+markers', name='集中度',
+                line=dict(color='#667eea', width=2),
+                marker=dict(size=4, color='#667eea'),
+                fill='tozeroy', fillcolor='rgba(102,126,234,0.10)',
+                hovertemplate='%{x}<br>集中度: %{y:.1f}%<extra></extra>',
+            ), row=1, col=1)
+            fig.add_hrect(y0=45, y1=60, fillcolor='#ec835a', opacity=0.12, line_width=0, row=1, col=1)
+            fig.add_hline(y=38, line_dash='dash', line_color='#aaa', line_width=1,
+                          annotation_text='38%下限', annotation_font_size=8, annotation_font_color='#888',
+                          row=1, col=1)
 
-                # 解读
-                latest_val = conc_history[-1]['concentration'] if conc_history else 0
-                if latest_val >= 45:
-                    st.caption(f"当前集中度 {latest_val:.1f}% 已进入历史高风险区间（阈值45%）。市场见顶/风格切换风险较高，建议关注资金轮动信号。", unsafe_allow_html=False)
-                elif latest_val >= 38:
-                    st.caption(f"当前集中度 {latest_val:.1f}% 处于正常区间，市场结构健康。", unsafe_allow_html=False)
-                else:
-                    st.caption(f"当前集中度 {latest_val:.1f}% 偏低，市场资金分散，低量个股活跃。", unsafe_allow_html=False)
-        else:
-            st.info("集中度指标数据获取失败（当前仅支持云端访问），部署后可显示全市场结构监控")
+            # 下：上证指数 (归一化)
+            fig.add_trace(go.Scatter(
+                x=dates, y=sh_indexed, mode='lines', name='上证指数(归一化)',
+                line=dict(color='#c00', width=1.6),
+                fill='tozeroy', fillcolor='rgba(204,0,0,0.05)', connectgaps=True,
+                hovertemplate='%{x}<br>上证: %{y:.2f}<extra></extra>',
+            ), row=2, col=1)
+
+            fig.update_layout(
+                height=360,
+                margin=dict(l=6, r=6, t=20, b=10),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(size=9),
+                showlegend=True,
+                legend=dict(orientation='h', y=1.06, x=0, font=dict(size=9)),
+                hovermode='x unified',
+            )
+            fig.update_yaxes(
+                title_text=None, showgrid=True, gridcolor='#f0f0f0',
+                zeroline=False, range=[20, 60], fixedrange=True, row=1, col=1,
+            )
+            fig.update_yaxes(
+                title_text=None, showgrid=True, gridcolor='#f0f0f0',
+                zeroline=False, fixedrange=True, tickformat='.1f', row=2, col=1,
+            )
+            fig.update_xaxes(
+                showgrid=False, zeroline=False, fixedrange=True,
+                tickangle=-30, tickfont=dict(size=8), nticks=8, row=1, col=1,
+            )
+            fig.update_xaxes(
+                showgrid=False, zeroline=False, fixedrange=True,
+                tickangle=-30, tickfont=dict(size=8), nticks=8, row=2, col=1,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # 解读 (用 banner 的 val, 跟 banner 数字保持一致)
+            if val >= 45:
+                st.caption(f"当前集中度 {val:.1f}% 已进入历史高风险区间(阈值45%)。市场见顶/风格切换风险较高,建议关注资金轮动信号。")
+            elif val >= 38:
+                st.caption(f"当前集中度 {val:.1f}% 处于正常区间,市场结构健康。")
+            else:
+                st.caption(f"当前集中度 {val:.1f}% 偏低,市场资金分散,低量个股活跃。")
+        elif data_status in ('live', 'stale') and 0 < len(conc_history) < 10:
+            st.caption(f"📈 历史走势需 ≥10 个交易日数据,当前累积 {len(conc_history)} 天。")
 
         st.divider()
 
@@ -1100,11 +1137,10 @@ def main():
                 _fetch_err = str(ex)
 
         if not sector_flows:
-            st.warning("板块资金流向数据获取失败（网络或API问题），请稍后刷新重试")
+            st.error("⚠ 板块资金流向数据源全部不可用 (东财/新浪 板块接口)。请检查网络或稍后重试。")
         else:
-            is_demo = any(s.get('demo') for s in sector_flows)
-            if is_demo:
-                st.info("当前显示演示数据（API暂时不可用），实际数据部署到云端后自动恢复")
+            # 演示数据已被移除,这里不再有 is_demo 判断
+            pass
 
             # ── 汇总统计 ────────────────────────────────────────────────
             in_flows = [s for s in sector_flows if s['flow_yi'] > 0]
