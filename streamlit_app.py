@@ -20,6 +20,17 @@ print(f"src exists: {Path('/mount/src/autogenlit/src').exists() if os.path.exist
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# 加载本地 .env(云端由 st.secrets 提供,这里不会覆盖已有环境变量)
+# python-dotenv 默认不覆盖已存在的环境变量,所以 st.secrets / 真实 env 优先级更高
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+        print(f"Loaded .env: {_env_path}", flush=True)
+except Exception as e:
+    print(f"dotenv load skipped: {type(e).__name__}: {e}", flush=True)
+
 from src.data.astock_collector import AStockDataCollector
 from src.data.market_collector import fetch_major_indices
 from src.data.news_collector import fetch_news
