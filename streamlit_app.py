@@ -20,6 +20,17 @@ print(f"src exists: {Path('/mount/src/autogenlit/src').exists() if os.path.exist
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# 加载本地 .env(云端由 st.secrets 提供,这里不会覆盖已有环境变量)
+# python-dotenv 默认不覆盖已存在的环境变量,所以 st.secrets / 真实 env 优先级更高
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+        print(f"Loaded .env: {_env_path}", flush=True)
+except Exception as e:
+    print(f"dotenv load skipped: {type(e).__name__}: {e}", flush=True)
+
 from src.data.astock_collector import AStockDataCollector
 from src.data.market_collector import fetch_major_indices
 from src.data.news_collector import fetch_news
@@ -38,6 +49,9 @@ from src.data.finchina_collector import (
     fetch_shareholders_trading,
     fetch_executive_trading,
     fetch_repurchase,
+    fetch_dragon_tiger_board,
+    parse_dragon_tiger_seats,
+    aggregate_seat_flow,
     fetch_company_suppliers,
     fetch_company_customers,
     fetch_company_tendering,
@@ -2129,7 +2143,7 @@ def main():
         st.markdown("""
         <div class="main-header" style="padding:15px 25px;margin-bottom:15px;">
             <h2 style="margin:0;">个股交易数据</h2>
-            <p style="margin:5px 0 0 0;opacity:0.85;">资金流向 · 融资融券 · 大宗交易 · 股东/高管增减持 · 股票回购</p>
+            <p style="margin:5px 0 0 0;opacity:0.85;">资金流向 · 融资融券 · 大宗交易 · 龙虎榜 · 股东/高管增减持 · 股票回购</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -2152,7 +2166,7 @@ def main():
 
         st.caption("数据来源：财汇金融与风险数据 MCP · 缓存 60 分钟 · 切换股票或条数后自动重新拉取")
 
-        tab_labels = ["资金流向", "融资融券", "大宗交易", "股东增减持", "高管增减持", "股票回购"]
+        tab_labels = ["资金流向", "融资融券", "大宗交易", "龙虎榜", "股东增减持", "高管增减持", "股票回购"]
         tabs = st.tabs(tab_labels)
 
         @st.cache_data(ttl=3600, show_spinner=False)
@@ -2160,6 +2174,7 @@ def main():
             if kind == "flow":   return fetch_capital_flow(code, lim)
             if kind == "margin": return fetch_margin_trading(code, lim)
             if kind == "block":  return fetch_block_trades(code, lim)
+            if kind == "lhb":    return fetch_dragon_tiger_board(code, lim)
             if kind == "share":  return fetch_shareholders_trading(code, lim)
             if kind == "exec":   return fetch_executive_trading(code, lim)
             if kind == "repur":  return fetch_repurchase(code, lim)
@@ -2385,12 +2400,155 @@ def main():
                               margin=dict(l=20, r=20, t=50, b=40))
             st.plotly_chart(fig, width="stretch")
 
+        def _format_lhb_table(df, head_info):
+            """龙虎榜表格:中文字段名 + 营业部展开 + 数值格式化"""
+            if df is None or df.empty:
+                return df.copy() if df is not None else None
+            parsed = parse_dragon_tiger_seats(df, top_n=5)
+            name_map = {}
+            for h in (head_info or []):
+                name_map[h["field"]] = h.get("name") or h["field"]
+            show = parsed.rename(columns=name_map)
+
+            # 换掉原始的营业部嵌套字符串列
+            buy_col = name_map.get("buy_seat", "buy_seat")
+            sell_col = name_map.get("sell_seat", "sell_seat")
+            if buy_col in show.columns:
+                show = show.drop(columns=[buy_col])
+            if sell_col in show.columns:
+                show = show.drop(columns=[sell_col])
+            show = show.rename(columns={
+                "buy_seat_text": "买入前五营业部",
+                "sell_seat_text": "卖出前五营业部",
+            })
+
+            # 数值格式化
+            pct_fields = ["deviation", "change_pct", "turnover_rate"]
+            for f in pct_fields:
+                if f in show.columns:
+                    show[f] = pd.to_numeric(show[f], errors="coerce").map(
+                        lambda v: f"{v:+.2f}%" if pd.notna(v) else "-")
+            for f in ["volume", "amount"]:
+                if f in show.columns:
+                    show[f] = pd.to_numeric(show[f], errors="coerce").map(
+                        lambda v: f"{v:,.2f}" if pd.notna(v) else "-")
+
+            # 列表/数组型字段(如 投资者类型)转成可读文本,别显示 numpy repr
+            for col in show.columns:
+                if show[col].dtype == object:
+                    sample = next((v for v in show[col] if v is not None), None)
+                    if isinstance(sample, (list, tuple)) or hasattr(sample, "tolist"):
+                        show[col] = show[col].map(
+                            lambda v: ("、".join(str(x) for x in v)
+                                       if isinstance(v, (list, tuple))
+                                       else (str(v.tolist()) if hasattr(v, "tolist") else "")
+                                       if v is not None else "")
+                        )
+
+            # 列顺序:日期在前
+            front = [c for c in ("申报日期", "股票代码", "股票名称", "异动原因")
+                     if c in show.columns]
+            show = show[front + [c for c in show.columns if c not in front]]
+            return show
+
+        def _viz_lhb(df, head_info):
+            """龙虎榜可视化:
+            1) 上榜记录时间轴(散点: 涨跌幅, hover 含异动原因/偏离值/成交额)
+            2) 营业部累计净买入 TOP 横向条形图
+            """
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+
+            d = parse_dragon_tiger_seats(df, top_n=5)
+            if d.empty:
+                return
+
+            date_col = "declare_date" if "declare_date" in d.columns else None
+            if date_col is None:
+                return
+            d = d.sort_values(date_col).reset_index(drop=True)
+
+            reason = d["abnormal_type"].astype(str) if "abnormal_type" in d.columns else None
+            chg = pd.to_numeric(d["change_pct"], errors="coerce") if "change_pct" in d.columns else pd.Series([0.0] * len(d))
+            dev = pd.to_numeric(d["deviation"], errors="coerce") if "deviation" in d.columns else pd.Series([0.0] * len(d))
+            amt = pd.to_numeric(d["amount"], errors="coerce") if "amount" in d.columns else pd.Series([0.0] * len(d))
+            turn = pd.to_numeric(d["turnover_rate"], errors="coerce") if "turnover_rate" in d.columns else pd.Series([0.0] * len(d))
+
+            # ── 图 1: 上榜记录时间轴 ──
+            fig1 = go.Figure()
+            if reason is not None:
+                # 每种异动原因一条 trace,便于图例区分
+                for r in reason.unique():
+                    mask = reason == r
+                    fig1.add_trace(go.Scatter(
+                        x=d.loc[mask, date_col],
+                        y=chg[mask],
+                        mode="markers",
+                        name=str(r)[:18],
+                        marker=dict(size=11, symbol="circle",
+                                    color="#16a34a" if chg[mask].mean() >= 0 else "#dc2626",
+                                    line=dict(color="white", width=1)),
+                        customdata=list(zip(
+                            dev[mask].fillna(0), amt[mask].fillna(0), turn[mask].fillna(0),
+                            [str(x)[:20] for x in reason[mask]],
+                        )),
+                        hovertemplate=(
+                            "%{x}<br>涨跌幅 %{y:+.2f}%"
+                            "<br>偏离值 %{customdata[0]:.2f}%"
+                            "<br>换手率 %{customdata[2]:.2f}%"
+                            "<br>成交额 %{customdata[1]:,.0f}万元"
+                            "<br>%{customdata[3]}<extra></extra>"
+                        ),
+                    ))
+            else:
+                fig1.add_trace(go.Scatter(
+                    x=d[date_col], y=chg, mode="markers", name="涨跌幅",
+                    marker=dict(size=11, color="#0d3b66"),
+                    hovertemplate="%{x}<br>涨跌幅 %{y:+.2f}%<extra></extra>",
+                ))
+            fig1.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1)
+            fig1.update_layout(
+                height=380, title="龙虎榜上榜记录 — 当日涨跌幅",
+                xaxis_title="申报日期", yaxis_title="涨跌幅(%)",
+                margin=dict(l=20, r=20, t=50, b=40),
+                legend=dict(orientation="h", y=1.12, x=0, font=dict(size=9)),
+            )
+            st.plotly_chart(fig1, width="stretch")
+
+            # ── 图 2: 营业部净买入排行 ──
+            agg = aggregate_seat_flow(df, top_n=10)
+            if not agg.empty:
+                fig2 = go.Figure()
+                agg = agg.sort_values("net")
+                colors = ["#16a34a" if v >= 0 else "#dc2626" for v in agg["net"]]
+                fig2.add_trace(go.Bar(
+                    x=agg["net"], y=agg["seat"], orientation="h",
+                    marker_color=colors,
+                    text=[f"{v:+,.0f}万" for v in agg["net"]],
+                    textposition="outside",
+                    customdata=list(zip(agg["buy"], agg["sell"])),
+                    hovertemplate=(
+                        "%{y}<br>净买入 %{x:+,.0f}万元"
+                        "<br>累计买入 %{customdata[0]:,.0f}万"
+                        "<br>累计卖出 %{customdata[1]:,.0f}万<extra></extra>"
+                    ),
+                ))
+                fig2.update_layout(
+                    height=420, title="龙虎榜营业部累计净买入 TOP 10(万元)",
+                    xaxis_title="净买入(万元)", yaxis_title="",
+                    margin=dict(l=20, r=20, t=50, b=40),
+                )
+                st.plotly_chart(fig2, width="stretch")
+
         def _render(df, tab_name, head_info):
             if df is None or df.empty:
                 st.info("暂无数据（该股票可能无可披露记录，或数据源返回空集）")
                 return
             # 1) 表格(中文列名 + 单位后缀 + 数值格式化)
-            show = _format_for_table(df, head_info)
+            if tab_name == "龙虎榜":
+                show = _format_lhb_table(df, head_info)
+            else:
+                show = _format_for_table(df, head_info)
             st.dataframe(show, width="stretch", hide_index=True, height=360)
             # 2) 可视化
             try:
@@ -2400,10 +2558,12 @@ def main():
                     _viz_margin(df, head_info)
                 elif tab_name == "大宗交易":
                     _viz_block(df, head_info)
+                elif tab_name == "龙虎榜":
+                    _viz_lhb(df, head_info)
             except Exception as e:
                 st.caption(f"可视化渲染失败(不影响表格): {e}")
 
-        kinds = ["flow", "margin", "block", "share", "exec", "repur"]
+        kinds = ["flow", "margin", "block", "lhb", "share", "exec", "repur"]
         for tab, kind, name in zip(tabs, kinds, tab_labels):
             with tab:
                 try:
