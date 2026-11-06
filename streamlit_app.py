@@ -734,9 +734,9 @@ def main():
                 update_concentration_cache,
             )
             today = fetch_top5_concentration()
-            # 写入持久化历史 (跨 session 累积)
+            # 写入持久化历史 (跨 session 累积); 复用已取到的 today,不再打一次接口
             if today:
-                update_concentration_cache()  # 会复用 today 避免重复拉
+                update_concentration_cache(today)
             history = get_concentration_history(120)
             return today, history
 
@@ -799,7 +799,7 @@ def main():
                 )
 
             # 历史均值
-            if len(conc_history) >= 5:
+            if len(conc_history) >= 3:
                 mean_html = (
                     f"<div style=\"font-size:1.2rem;font-weight:700;color:#52514e;\">"
                     f"{sum(h['concentration'] for h in conc_history)/len(conc_history):.1f}%</div>"
@@ -810,7 +810,7 @@ def main():
                 mean_html = (
                     f"<div style=\"font-size:1.2rem;font-weight:700;color:#cbd5e1;\">—</div>"
                     f"<div style=\"font-size:0.72rem;color:#888;margin-top:2px;\">"
-                    f"历史 {len(conc_history)} 天 (≥5 天后显示均值)</div>"
+                    f"历史 {len(conc_history)} 天 (≥3 天后显示均值)</div>"
                 )
 
             st.markdown(f"""
@@ -872,8 +872,8 @@ def main():
                 _load_concentration.clear()
                 st.rerun()
 
-        # ── 历史走势图 (live + stale 都画; 只有 conc_history>=10 才显示走势) ──
-        if data_status in ('live', 'stale') and len(conc_history) >= 10:
+        # ── 历史走势图 (live + stale 都画; 至少 5 个交易日才画) ──
+        if data_status in ('live', 'stale') and len(conc_history) >= 5:
             import plotly.graph_objects as go
             from plotly.subplots import make_subplots
 
@@ -972,8 +972,18 @@ def main():
                 st.caption(f"当前集中度 {val:.1f}% 处于正常区间,市场结构健康。")
             else:
                 st.caption(f"当前集中度 {val:.1f}% 偏低,市场资金分散,低量个股活跃。")
-        elif data_status in ('live', 'stale') and 0 < len(conc_history) < 10:
-            st.caption(f"📈 历史走势需 ≥10 个交易日数据,当前累积 {len(conc_history)} 天。")
+
+            # 口径说明:历史点为回填估算,当日为实时精确值
+            n_backfill = sum(1 for h in conc_history if h.get('source') == 'backfill')
+            n_live = len(conc_history) - n_backfill
+            st.caption(
+                f"📐 口径: 分子=全市场 {c.get('top5_stocks', '—')} 只最高成交额个股之和,"
+                f"分母=沪深两市当日股票成交总额。当日数值为实时精确值;"
+                f"历史 {n_backfill} 天为回填估算(逐股日线推算成交额,误差 &lt;1%,已与当日实时值对齐验证),"
+                f"另有 {n_live} 天为每日运行时实测。"
+            )
+        elif data_status in ('live', 'stale') and 0 < len(conc_history) < 5:
+            st.caption(f"📈 历史走势需 ≥5 个交易日数据,当前累积 {len(conc_history)} 天。")
 
         st.divider()
 

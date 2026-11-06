@@ -1,0 +1,548 @@
+{
+  "generated_at": "2026-11-06 19:17:44",
+  "pool_size": 600,
+  "market_size": 5218,
+  "method": "新浪日线推算成交额(误差<1%) + 交易所每日成交总额",
+  "history": [
+    {
+      "date": "2026-08-07",
+      "concentration": 49.44299910262051,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 13187.3552049301,
+      "total_amount": 26671.835131925,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-10",
+      "concentration": 48.95768112507058,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 12366.427347363575,
+      "total_amount": 25259.4221441401,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-11",
+      "concentration": 46.62884657906124,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 10834.705920862625,
+      "total_amount": 23236.0581823355,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-12",
+      "concentration": 46.33633136446447,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9984.5751629826,
+      "total_amount": 21548.0485160718,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-13",
+      "concentration": 47.12293153213737,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 12035.082602498826,
+      "total_amount": 25539.7578444181,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-14",
+      "concentration": 45.78200837417869,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9820.894885906751,
+      "total_amount": 21451.428704569,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-17",
+      "concentration": 48.49903318771677,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 11592.74684693805,
+      "total_amount": 23903.0473083206,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-18",
+      "concentration": 46.91198704392678,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 11271.821362160148,
+      "total_amount": 24027.5931002573,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-19",
+      "concentration": 47.49658605862593,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 11935.16130358575,
+      "total_amount": 25128.461420056497,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-20",
+      "concentration": 45.53680366919173,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9479.439611456026,
+      "total_amount": 20817.094849960697,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-21",
+      "concentration": 45.672160136885296,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8595.169006138249,
+      "total_amount": 18819.274105664,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-24",
+      "concentration": 47.339070700611,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9509.790881546225,
+      "total_amount": 20088.6725083589,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-25",
+      "concentration": 43.68255576782506,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8016.55292029665,
+      "total_amount": 18351.840407198302,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-26",
+      "concentration": 42.75754240911927,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7741.973156251901,
+      "total_amount": 18106.6841545147,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-27",
+      "concentration": 46.02248751179628,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9796.246532375551,
+      "total_amount": 21285.782368596698,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-28",
+      "concentration": 45.29791386027128,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9530.23861115125,
+      "total_amount": 21039.0232109779,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-08-31",
+      "concentration": 43.655827604951284,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9313.47776627855,
+      "total_amount": 21333.8705901025,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-01",
+      "concentration": 41.3752090371771,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8423.034879718074,
+      "total_amount": 20357.6853766459,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-02",
+      "concentration": 41.07716004863196,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7364.671248021675,
+      "total_amount": 17928.8715171704,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-03",
+      "concentration": 41.261396646999124,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7264.860775985175,
+      "total_amount": 17606.9192183138,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-04",
+      "concentration": 41.39658936463999,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8418.3372921537,
+      "total_amount": 20335.82336458,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-07",
+      "concentration": 45.161165117737085,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8803.79592935245,
+      "total_amount": 19494.1736033616,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-08",
+      "concentration": 43.44144315881555,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8524.417652469401,
+      "total_amount": 19622.777312681297,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-09",
+      "concentration": 42.00592345094831,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7803.3927751497995,
+      "total_amount": 18576.886624721097,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-10",
+      "concentration": 41.044401778069364,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6768.3190867654,
+      "total_amount": 16490.2368984747,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-11",
+      "concentration": 43.72925583973351,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8634.613574949575,
+      "total_amount": 19745.622030695402,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-14",
+      "concentration": 42.76307316445455,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6975.27069664425,
+      "total_amount": 16311.434563693198,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-15",
+      "concentration": 43.552944275726716,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7030.7663236605,
+      "total_amount": 16143.0333599259,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-16",
+      "concentration": 46.136921616290174,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8493.052914995826,
+      "total_amount": 18408.364965548702,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-17",
+      "concentration": 46.77091840047433,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8536.0364240115,
+      "total_amount": 18250.7351062085,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-18",
+      "concentration": 46.9084816814335,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9752.679539624449,
+      "total_amount": 20790.8659373313,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-21",
+      "concentration": 42.50220322536527,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8644.5711026464,
+      "total_amount": 20339.1129085923,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-22",
+      "concentration": 44.35724777937459,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9487.746067905051,
+      "total_amount": 21389.3930369519,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-23",
+      "concentration": 40.45280781215264,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7147.86882582865,
+      "total_amount": 17669.6481960427,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-24",
+      "concentration": 40.32208580815349,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6674.902838191901,
+      "total_amount": 16553.962188241203,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-28",
+      "concentration": 42.01760621314911,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7162.4430041652,
+      "total_amount": 17046.289995272902,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-29",
+      "concentration": 40.45254613334489,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 5707.570240703425,
+      "total_amount": 14109.297896575898,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-09-30",
+      "concentration": 40.29735062514065,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 5800.226697079024,
+      "total_amount": 14393.5683291804,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-08",
+      "concentration": 41.774909846280046,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7033.353008004025,
+      "total_amount": 16836.309243717802,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-09",
+      "concentration": 41.44857763055288,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7882.545837851425,
+      "total_amount": 19017.650999056197,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-12",
+      "concentration": 40.19305966126615,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6187.2911510311,
+      "total_amount": 15393.929208613501,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-13",
+      "concentration": 41.17970823415389,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6910.178063082049,
+      "total_amount": 16780.5415807945,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-14",
+      "concentration": 39.882570047664814,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 5647.76176896385,
+      "total_amount": 14160.977495216699,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-15",
+      "concentration": 41.805691217083194,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6835.1842114896,
+      "total_amount": 16349.8892435404,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-16",
+      "concentration": 39.845837169075,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6219.1705376374,
+      "total_amount": 15608.0809928727,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-19",
+      "concentration": 40.2693429205515,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 5796.3710003735,
+      "total_amount": 14394.0044212028,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-20",
+      "concentration": 41.58179759725314,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6064.6287805857755,
+      "total_amount": 14584.8162682279,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-21",
+      "concentration": 43.262852483132356,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6192.9147858296255,
+      "total_amount": 14314.6242801354,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-22",
+      "concentration": 43.318842004709026,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6630.642522179375,
+      "total_amount": 15306.601504856899,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-23",
+      "concentration": 42.388646030319535,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8303.8048514962,
+      "total_amount": 19589.691177106,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-26",
+      "concentration": 42.36414067429411,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6821.0447586869495,
+      "total_amount": 16100.986943483198,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-27",
+      "concentration": 40.03231188403624,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 5856.16383578725,
+      "total_amount": 14628.5926547313,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-28",
+      "concentration": 42.142684465241146,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6871.077895525525,
+      "total_amount": 16304.319439338798,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-29",
+      "concentration": 42.06912936895469,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6554.341661936324,
+      "total_amount": 15579.931793818301,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-10-30",
+      "concentration": 39.82580855204651,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 6677.3090201246,
+      "total_amount": 16766.2861418076,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-11-02",
+      "concentration": 40.080027572178686,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7155.8600277821,
+      "total_amount": 17853.9299028559,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-11-03",
+      "concentration": 43.14341454431552,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7358.9216811793,
+      "total_amount": 17056.8828612776,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-11-04",
+      "concentration": 42.703722609455255,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 8711.475488578075,
+      "total_amount": 20399.803474391298,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-11-05",
+      "concentration": 43.70060027903799,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 9268.346974613425,
+      "total_amount": 21208.7406475723,
+      "source": "backfill"
+    },
+    {
+      "date": "2026-11-06",
+      "concentration": 43.17535337910261,
+      "total_stocks": 5218,
+      "top5_stocks": 260,
+      "top5_amount": 7162.7820115887,
+      "total_amount": 16589.9788907242,
+      "source": "backfill"
+    }
+  ]
+}

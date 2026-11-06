@@ -638,15 +638,68 @@ import time as _time
 _concentration_cache: Dict[str, float] = {}
 _concentration_history: List[Dict] = []
 
+# ── 集中度指标口径常量 ──────────────────────────────────────
+# 沪深 A 股代码前缀白名单。
+#   沪市主板 600/601/603/605 · 科创板 688/689
+#   深市主板 000/001/002/003 · 创业板 300/301/302
+# 统一排除:北交所(920/430/830/870)、B 股(200/900)、新股未上市
+_A_CODE_PREFIXES = (
+    '600', '601', '603', '605', '688', '689',
+    '000', '001', '002', '003', '300', '301', '302',
+)
 
-def fetch_top5_concentration() -> Dict:
+# 东财板块过滤。注意各板块 id 的真实含义(踩过坑):
+#   m:0+t:6  = 深市主板      m:1+t:2  = 沪市主板
+#   m:1+t:23 = 科创板        m:0+t:80 = 创业板   ← 创业板不是 m:1+t:23
+#   m:0+t:13 = 无效板块(旧代码误用,会导致创业板整板缺失)
+_EM_FS = 'm:0+t:6,m:1+t:2,m:1+t:23,m:0+t:80'
+
+# 全市场最少股票数:少于这个数说明只拿到部分市场。
+# 东财 clist 接口每页硬上限 100 条(传 pz=5000 也只返回 100),必须翻页;
+# 万一翻页逻辑失效,宁可降级到下一个数据源,也不发布一个"截断宇宙"算出的错误值。
+_MIN_UNIVERSE = 3000
+
+
+def _is_a_share(code: str) -> bool:
+    """是否属于口径内的沪深 A 股"""
+    c = str(code or '').strip()
+    return len(c) == 6 and c.isdigit() and c.startswith(_A_CODE_PREFIXES)
+
+
+def fetch_top5_concentration(only: Optional[str] = None) -> Dict:
     """
     获取当日全市场成交额集中度（前5%个股成交额占比）
     返回: {'date': str, 'concentration': float, 'total_stocks': int,
            'top5_stocks': int, 'top5_amount': float, 'total_amount': float}
+
+    only: 指定只跑某一个源('eastmoney' / 'akshare_sina' / 'tencent_batch'),
+          用于交叉校验各源口径是否一致;默认按优先级链依次尝试。
     """
     import os
     os.environ['NO_PROXY'] = '*'
+
+    def _finalize(valid, source_name):
+        """按成交额降序算 Top5% 占比;universe 不足则返回 None(降级到下一个源)"""
+        if not valid:
+            return None
+        total_amount = sum(x['amount'] for x in valid)
+        if total_amount <= 0:
+            return None
+        if len(valid) < _MIN_UNIVERSE:
+            logger.debug(f"集中度 {source_name}: 仅取到 {len(valid)} 只(< {_MIN_UNIVERSE}),丢弃避免出错误值")
+            return None
+        valid.sort(key=lambda x: x['amount'], reverse=True)
+        n_top = max(1, int(len(valid) * 0.05))
+        top5_amount = sum(x['amount'] for x in valid[:n_top])
+        return {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'concentration': (top5_amount / total_amount) * 100,
+            'total_stocks': len(valid),
+            'top5_stocks': n_top,
+            'top5_amount': top5_amount / 1e8,   # 转为亿元
+            'total_amount': total_amount / 1e8,  # 转为亿元
+            'source': source_name,
+        }
 
     # ── 方案1：东财全市场实时行情（成交额字段：f6）───────────
     def _try_eastmoney_spot():
@@ -656,50 +709,44 @@ def fetch_top5_concentration() -> Dict:
             'Referer': 'https://data.eastmoney.com/',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        # 沪深北三市全市场，f6=成交额（元）
-        url = (
-            'https://push2.eastmoney.com/api/qt/clist/get?'
-            'pn=1&pz=5000&po=1&np=1&fltt=2&invt=2&fid=f6&'
-            'fs=m:0+t:6,m:0+t:13,m:1+t:2,m:1+t:23&'
-            'fields=f12,f14,f6,f8,f3'
-        )
-        r = session.get(url, headers=headers, timeout=15)
-        r.encoding = 'utf-8'
-        data = r.json()
-        stocks = data.get('data', {}).get('diff', [])
+        base = 'https://push2.eastmoney.com/api/qt/clist/get?'
+        query = ('po=1&np=1&fltt=2&invt=2&fid=f6&'
+                 f'fs={_EM_FS}&fields=f12,f14,f6,f8,f3')
+
+        # 东财 clist 每页最多 100 条(total 字段会报全市场总数),必须翻页取全量
+        stocks = []
+        total = None
+        for page in range(1, 80):        # 上限 80 页 = 8000 只,防跑飞
+            url = f'{base}pn={page}&pz=100&{query}'
+            r = session.get(url, headers=headers, timeout=15)
+            r.encoding = 'utf-8'
+            data = (r.json().get('data') or {})
+            if total is None:
+                total = int(data.get('total') or 0)
+            diff = data.get('diff') or []
+            if not diff:
+                break
+            stocks.extend(diff)
+            if total and len(stocks) >= total:
+                break
+
         if not stocks:
             return None
 
-        total_amount = 0.0
         valid = []
         for s in stocks:
             try:
+                code = str(s.get('f12', ''))
+                if not _is_a_share(code):
+                    continue
                 amt = float(s.get('f6', 0) or 0)
                 if amt <= 0:
                     continue
-                valid.append({'code': str(s.get('f12', '')), 'name': str(s.get('f14', '')), 'amount': amt})
-                total_amount += amt
+                valid.append({'code': code, 'name': str(s.get('f14', '')), 'amount': amt})
             except Exception:
                 continue
 
-        if not valid or total_amount <= 0:
-            return None
-
-        # 按成交额降序，取前5%
-        valid.sort(key=lambda x: x['amount'], reverse=True)
-        n_top = max(1, int(len(valid) * 0.05))
-        top5_amount = sum(x['amount'] for x in valid[:n_top])
-        concentration = (top5_amount / total_amount) * 100
-
-        return {
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'concentration': concentration,
-            'total_stocks': len(valid),
-            'top5_stocks': n_top,
-            'top5_amount': top5_amount / 1e8,   # 转为亿元
-            'total_amount': total_amount / 1e8,  # 转为亿元
-            'source': 'eastmoney',
-        }
+        return _finalize(valid, 'eastmoney')
 
     # ── 方案2：akshare全市场股票列表+新浪批量实时行情─────────
     def _try_akshare_sina():
@@ -710,13 +757,15 @@ def fetch_top5_concentration() -> Dict:
         except Exception:
             return None
 
-        # akshare返回纯数字代码，补上前缀：沪市600/601/603/605/688开头 → sh，深市000/001/002/003/300开头 → sz
+        # akshare返回纯数字代码，补上前缀：沪市600/601/603/605/688开头 → sh，深市000/001/002/003/300/301开头 → sz
         codes = []
         for c in codes_raw:
             c = str(c).zfill(6)
-            if c.startswith(('600', '601', '603', '605', '688')):
+            if not _is_a_share(c):
+                continue
+            if c.startswith(('600', '601', '603', '605', '688', '689')):
                 codes.append('sh' + c)
-            elif c.startswith(('000', '001', '002', '003', '300')):
+            else:
                 codes.append('sz' + c)
 
         if not codes:
@@ -746,9 +795,10 @@ def fetch_top5_concentration() -> Dict:
                     if len(fields) < 10:
                         continue
                     try:
-                        # 新浪字段：8=成交额（元）
+                        # 新浪实时行情字段：[8]=成交量(股),[9]=成交额(元)
+                        # 历史 bug: 误取 [8] 当成交额,导致高价股被低估、指标系统性偏低
                         code_raw = line.split('var hq_str_')[1].split('=')[0].strip()
-                        amount = float(fields[8]) if fields[8] else 0.0
+                        amount = float(fields[9]) if len(fields) > 9 and fields[9] else 0.0
                         if amount > 0:
                             valid.append({'code': code_raw, 'amount': amount})
                             total_amount += amount
@@ -762,20 +812,7 @@ def fetch_top5_concentration() -> Dict:
         if not valid or total_amount <= 0:
             return None
 
-        valid.sort(key=lambda x: x['amount'], reverse=True)
-        n_top = max(1, int(len(valid) * 0.05))
-        top5_amount = sum(x['amount'] for x in valid[:n_top])
-        concentration = (top5_amount / total_amount) * 100
-
-        return {
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'concentration': concentration,
-            'total_stocks': len(valid),
-            'top5_stocks': n_top,
-            'top5_amount': top5_amount / 1e8,   # 元→亿元
-            'total_amount': total_amount / 1e8,  # 元→亿元
-            'source': 'sina_batch',
-        }
+        return _finalize(valid, 'sina_batch')
 
     # ── 方案3：腾讯 qt.gtimg.cn 批量（fallback #3）───────────────
     def _try_tencent_batch():
@@ -787,12 +824,14 @@ def fetch_top5_concentration() -> Dict:
         except Exception:
             return None
 
-        # 补前缀：沪市 600/601/603/605/688 → sh，深市 → sz
+        # 补前缀：沪市 600/601/603/605/688 → sh，深市 → sz（口径同东财，统一沪深 A 股）
         codes = []
         for c in codes_raw:
-            if c.startswith(('600', '601', '603', '605', '688')):
+            if not _is_a_share(c):
+                continue
+            if c.startswith(('600', '601', '603', '605', '688', '689')):
                 codes.append('sh' + c)
-            elif c.startswith(('000', '001', '002', '003', '300')):
+            else:
                 codes.append('sz' + c)
         if not codes:
             return None
@@ -805,8 +844,8 @@ def fetch_top5_concentration() -> Dict:
         total_amount = 0.0
         valid = []
         batch_size = 50
-        # 最多拉 80 批 ≈ 4000 只，覆盖全市场 99% 成交额；超过不再拉（避免超时）
-        max_batches = 80
+        # 沪深 A 股约 5600 只 → 约 112 批;留到 130 批封顶,避免个别批次失败导致宇宙不全
+        max_batches = 130
         for i in range(0, min(len(codes), batch_size * max_batches), batch_size):
             batch = codes[i:i+batch_size]
             try:
@@ -825,8 +864,8 @@ def fetch_top5_concentration() -> Dict:
                     if len(fields) < 38:
                         continue
                     try:
-                        # 腾讯字段：[6]=当前价，[37]=成交额（元），[38]=成交额（元，与37冗余）
-                        amount = float(fields[37]) if fields[37] else 0.0
+                        # 腾讯字段：[37]=成交额（单位:万元），换算成元
+                        amount = float(fields[37]) * 1e4 if fields[37] else 0.0
                         if amount > 0:
                             valid.append({'amount': amount})
                             total_amount += amount
@@ -840,20 +879,7 @@ def fetch_top5_concentration() -> Dict:
         if not valid or total_amount <= 0:
             return None
 
-        valid.sort(key=lambda x: x['amount'], reverse=True)
-        n_top = max(1, int(len(valid) * 0.05))
-        top5_amount = sum(x['amount'] for x in valid[:n_top])
-        concentration = (top5_amount / total_amount) * 100
-
-        return {
-            'date': datetime.now().strftime('%Y-%m-%d'),
-            'concentration': concentration,
-            'total_stocks': len(valid),
-            'top5_stocks': n_top,
-            'top5_amount': top5_amount / 1e8,
-            'total_amount': total_amount / 1e8,
-            'source': 'tencent_batch',
-        }
+        return _finalize(valid, 'tencent_batch')
 
     # ── 优先级链:东财(快) → 新浪(稳) → 腾讯(兜底) ──
     # 各自独立 try,失败记录日志继续下一个;任一成功立即返回
@@ -863,6 +889,8 @@ def fetch_top5_concentration() -> Dict:
         ('tencent_batch', _try_tencent_batch),
     ]
     for src_name, src_fn in candidates:
+        if only and src_name != only:
+            continue
         try:
             result = src_fn()
             if result and result.get('concentration', 0) > 0:
@@ -915,10 +943,52 @@ def _load_history_from_disk() -> List[Dict]:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         if isinstance(data, list):
-            return data
+            return _sanitize_history(data)
     except Exception:
         pass
     return []
+
+
+# 实时口径的数据源(这些记录的 universe 必须达到 _MIN_UNIVERSE 才可信)
+_REALTIME_SOURCES = ('eastmoney', 'sina_batch', 'tencent_batch')
+
+
+def _sanitize_history(history: List[Dict]) -> List[Dict]:
+    """剔除口径不完整的历史记录。
+
+    早期版本的东财分页只取到 100 只(且正好是成交额最大的 100 只),
+    分子分母同时被截断,算出的 13~15% 是假值。留着会污染历史均值,
+    这里按 universe 大小直接剔除。回填种子(source='backfill')不受影响。
+    """
+    out = []
+    for h in history:
+        try:
+            if h.get('source') in _REALTIME_SOURCES and int(h.get('total_stocks') or 0) < _MIN_UNIVERSE:
+                logger.debug(f"集中度历史剔除口径不完整记录: {h.get('date')} "
+                             f"({h.get('total_stocks')} 只 < {_MIN_UNIVERSE})")
+                continue
+        except (TypeError, ValueError):
+            continue
+        out.append(h)
+    return out
+
+
+def _load_seed_history() -> List[Dict]:
+    """读取仓库自带的回填种子历史。
+
+    随代码一起发布,云端部署后无需等待「打开一次攒一天」即可有完整走势。
+    """
+    path = Path(__file__).parent.parent.parent / 'data' / 'concentration_history_seed.json'
+    try:
+        if not path.exists():
+            return []
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        rows = data.get('history') if isinstance(data, dict) else data
+        return [r for r in (rows or []) if r.get('date') and r.get('concentration') is not None]
+    except Exception as e:
+        logger.debug(f"读取集中度种子历史失败: {e}")
+        return []
 
 
 def _save_history_to_disk(history: List[Dict]):
@@ -940,25 +1010,43 @@ if not _concentration_history:
 
 def get_concentration_history(n_days: int = 90) -> List[Dict]:
     """
-    返回近N个交易日的集中度历史数据。
-    从磁盘 JSON 缓存恢复(跨 session 累积);无缓存则返回 []。
+    返回近N个交易日的集中度历史数据 = 运行时实测记录 ∪ 仓库回填种子。
+
+    同一天以运行时实测(全市场口径)为准,种子只补空白日期。
     """
     # 优先用内存,空的话从磁盘读
     hist = _concentration_history if _concentration_history else _load_history_from_disk()
     if hist and not _concentration_history:
         # 同步到内存
         _concentration_history.extend(hist)
-    return hist[-n_days:] if hist else []
+
+    seed = _load_seed_history()
+    if not seed:
+        return hist[-n_days:] if hist else []
+
+    by_date = {}
+    for h in seed:
+        if h.get('date'):
+            by_date[h['date']] = h
+    for h in hist:
+        if h.get('date'):
+            by_date[h['date']] = h          # 运行时覆盖种子
+    merged = [by_date[d] for d in sorted(by_date)]
+    return merged[-n_days:] if merged else []
 
 
-def update_concentration_cache():
-    """每日更新一次集中度数据,持久化到磁盘供后续 session 使用"""
+def update_concentration_cache(result: Optional[Dict] = None):
+    """每日更新一次集中度数据,持久化到磁盘供后续 session 使用。
+
+    result 已由调用方拿到时直接复用,避免再打一次全市场行情接口。
+    """
     global _concentration_cache, _concentration_history
     today = datetime.now().strftime('%Y-%m-%d')
     # 同一天不重复拉
     if _concentration_cache.get('date') == today and _concentration_cache.get('latest'):
         return _concentration_cache['latest']
-    result = fetch_top5_concentration()
+    if result is None:
+        result = fetch_top5_concentration()
     if result:
         _concentration_cache['date'] = today
         _concentration_cache['latest'] = result
