@@ -37,3 +37,6 @@ Thumbs.db
 
 # 旧版 Streamlit 备份(已被 streamlit_app.py 取代,仅留本地)
 orig_streamlit.py
+
+# 网页上传时误建的嵌套项目副本(项目本体已在仓库根目录)
+a_stock_research/
