@@ -34,3 +34,6 @@ Thumbs.db
 # Streamlit secrets (API keys)
 .streamlit/secrets.toml
 .streamlit
+
+# 旧版 Streamlit 备份(已被 streamlit_app.py 取代,仅留本地)
+orig_streamlit.py
