@@ -29,6 +29,16 @@ if radio is None:
 radio.set_value("个股交易数据").run()
 print("[2] 已切到「个股交易数据」")
 
+# 换一只上过龙虎榜的股票(默认 688825 无龙虎榜记录)
+code_input = None
+for ti in at.text_input:
+    if ti.key == "stock_trade_code":
+        code_input = ti
+        break
+if code_input is not None:
+    code_input.set_value("000001").run()
+    print("[2b] 股票代码 -> 000001")
+
 # 异常检查
 if at.exception:
     for e in at.exception:
@@ -45,6 +55,15 @@ for a in at.info:
     alerts.append(("info", a.value))
 
 print(f"\n[3] 页面元素: dataframe={len(at.dataframe)}  markdown={len(at.markdown)}")
+try:
+    n_charts = len(at.get("plotly_chart"))
+except Exception:
+    n_charts = -1
+print(f"    plotly 图表数: {n_charts}")
+for c in at.caption:
+    t = (c.value or "").replace("\n", " ")
+    if "可视化渲染失败" in t:
+        print(f"    [VIZ-FAIL] {t[:200]}")
 print("[4] 告警/提示:")
 if not alerts:
     print("    (无)")
